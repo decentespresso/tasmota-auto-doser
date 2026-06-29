@@ -30,6 +30,7 @@ import requests
 import shutil
 import subprocess
 import codecs
+import sys
 from pathlib import Path
 from colorama import Fore
 from SCons.Script import COMMAND_LINE_TARGETS
@@ -376,11 +377,19 @@ def esp32_create_combined_bin(source, target, env):
                 print()
 
         if("safeboot" not in firmware_name):
-            cmdline = [env.subst("$OBJCOPY")] + normalize_paths(cmd)
+            cmdline = esp32_esptool_command(env) + normalize_paths(cmd)
             # print('Command Line: %s' % cmdline)
             result = subprocess.run(cmdline, text=True, check=False, stdout=subprocess.DEVNULL)
             if result.returncode != 0:
                 print(Fore.RED + f"esptool create firmware failed with exit code: {result.returncode}")
+
+def esp32_esptool_command(env):
+    command = env.subst("$OBJCOPY").strip('"')
+    if os.path.isdir(command):
+        candidate = command + ".py"
+        if os.path.exists(candidate):
+            return [sys.executable, candidate]
+    return [command]
 
 silent_action = env.Action(esp32_create_combined_bin)
 silent_action.strfunction = lambda target, source, env: '' # hack to silence scons command output
