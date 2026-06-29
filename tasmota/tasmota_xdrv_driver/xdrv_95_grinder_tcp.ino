@@ -40,6 +40,10 @@
 #define GRINDER_TCP_BUSY_CLOSE_SLOTS 4
 #endif
 
+#ifndef GRINDER_TCP_MDNS_RETRY
+#define GRINDER_TCP_MDNS_RETRY 5000
+#endif
+
 #ifndef GRINDER_TCP_MODEL
 #define GRINDER_TCP_MODEL "NOUS_A6T"
 #endif
@@ -58,6 +62,7 @@ struct {
   GrinderTcpLineReader reader;
   uint32_t last_rx = 0;
   uint32_t close_at = 0;
+  uint32_t mdns_retry_at = 0;
   char plug_mac[18] = { 0 };
   bool server_open = false;
   bool client_open = false;
@@ -343,7 +348,10 @@ void GrinderTcpEnforceRelayOwnership(void) {
 void GrinderTcpLoop(void) {
   GrinderTcpFinishActiveClose();
   GrinderTcpFinishClosingClients();
-  if (GrinderTcp.server_open && !GrinderTcp.advertised) {
+  if (GrinderTcp.server_open) {
+    if (!Mdns.begun) {
+      GrinderTcp.advertised = false;
+    }
     GrinderTcpAdvertise();
   }
   GrinderTcpReadClient();
@@ -352,24 +360,49 @@ void GrinderTcpLoop(void) {
   GrinderTcpEnforceRelayOwnership();
 }
 
+void GrinderTcpEnsureMdns(void) {
+  Settings->flag3.mdns_enabled = 1;
+  if (!Mdns.begun) {
+    StartMdns();
+  }
+#if defined(USE_WEBSERVER) && defined(WEBSERVER_ADVERTISE)
+  if ((1 == Mdns.begun) && Settings->webserver) {
+    MdnsAddServiceHttp();
+  }
+#endif
+}
+
+bool GrinderTcpWriteMdnsTxt(char *service, char *proto, char *key_mac, char *key_name, char *key_model, char *key_proto, char *model, char *proto_version) {
+  return MDNS.addServiceTxt(service, proto, key_mac, GrinderTcp.plug_mac) &&
+         MDNS.addServiceTxt(service, proto, key_name, NetworkHostname()) &&
+         MDNS.addServiceTxt(service, proto, key_model, model) &&
+         MDNS.addServiceTxt(service, proto, key_proto, proto_version);
+}
+
 void GrinderTcpAdvertise(void) {
-  if (!GrinderTcp.advertised && Mdns.begun) {
-    char service[] = "grinderplug";
-    char proto[] = "tcp";
-    char key_mac[] = "mac";
-    char key_name[] = "name";
-    char key_model[] = "model";
-    char key_proto[] = "proto";
-    char model[] = GRINDER_TCP_MODEL;
-    char proto_version[] = "1";
-    const bool service_added = MDNS.addService(service, proto, GRINDER_TCP_PORT);
-    if (service_added) {
-      MDNS.addServiceTxt(service, proto, key_mac, GrinderTcp.plug_mac);
-      MDNS.addServiceTxt(service, proto, key_name, NetworkHostname());
-      MDNS.addServiceTxt(service, proto, key_model, model);
-      MDNS.addServiceTxt(service, proto, key_proto, proto_version);
-      GrinderTcp.advertised = true;
-    }
+  if (GrinderTcp.advertised) {
+    return;
+  }
+  if (!TimeReached(GrinderTcp.mdns_retry_at)) {
+    return;
+  }
+  GrinderTcp.mdns_retry_at = millis() + GRINDER_TCP_MDNS_RETRY;
+  GrinderTcpEnsureMdns();
+  if (!Mdns.begun) {
+    return;
+  }
+  char service[] = "grinderplug";
+  char proto[] = "tcp";
+  char key_mac[] = "mac";
+  char key_name[] = "name";
+  char key_model[] = "model";
+  char key_proto[] = "proto";
+  char model[] = GRINDER_TCP_MODEL;
+  char proto_version[] = "1";
+  MDNS.addService(service, proto, GRINDER_TCP_PORT);
+  const bool txt_added = GrinderTcpWriteMdnsTxt(service, proto, key_mac, key_name, key_model, key_proto, model, proto_version);
+  if (txt_added) {
+    GrinderTcp.advertised = true;
   }
 }
 
@@ -385,6 +418,7 @@ void GrinderTcpStart(void) {
   GrinderTcpServer.begin();
   GrinderTcpServer.setNoDelay(true);
   GrinderTcp.server_open = true;
+  GrinderTcp.mdns_retry_at = 0;
   GrinderTcpAdvertise();
   AddLogServerActive(PSTR("Grinder TCP"));
 }
