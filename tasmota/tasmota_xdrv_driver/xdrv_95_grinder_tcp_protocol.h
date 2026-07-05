@@ -35,6 +35,7 @@ enum GrinderTcpReason {
 enum GrinderTcpReadResult {
   GRINDER_TCP_READ_NONE,
   GRINDER_TCP_READ_LINE,
+  GRINDER_TCP_READ_EMERGENCY_OFF,
   GRINDER_TCP_READ_OVERFLOW,
   GRINDER_TCP_READ_INVALID
 };
@@ -43,6 +44,7 @@ struct GrinderTcpLineReader {
   char line[GRINDER_TCP_MAX_LINE_LENGTH + 1];
   uint16_t length;
   bool pending_cr;
+  bool discard_newline;
 };
 
 struct GrinderTcpParseResult {
@@ -54,9 +56,28 @@ static inline void GrinderTcpLineReset(GrinderTcpLineReader *reader) {
   reader->length = 0;
   reader->line[0] = 0;
   reader->pending_cr = false;
+  reader->discard_newline = false;
 }
 
 static inline GrinderTcpReadResult GrinderTcpLineRead(GrinderTcpLineReader *reader, const uint8_t value) {
+  if (reader->discard_newline) {
+    if ('\r' == value) {
+      return GRINDER_TCP_READ_NONE;
+    }
+    reader->discard_newline = false;
+    if ('\n' == value) {
+      return GRINDER_TCP_READ_NONE;
+    }
+  }
+  if ('!' == value) {
+    if ((0 == reader->length) && !reader->pending_cr) {
+      reader->line[0] = 0;
+      reader->discard_newline = true;
+      return GRINDER_TCP_READ_EMERGENCY_OFF;
+    }
+    GrinderTcpLineReset(reader);
+    return GRINDER_TCP_READ_INVALID;
+  }
   if ('\r' == value) {
     if (reader->pending_cr) {
       GrinderTcpLineReset(reader);
@@ -139,6 +160,9 @@ static inline GrinderTcpParseResult GrinderTcpParseLine(const char *line, const 
   }
   if (0 == strcmp(line, "PING")) {
     return greeted ? GrinderTcpActionResult(GRINDER_TCP_ACTION_PING) : GrinderTcpErrorResult(GRINDER_TCP_REASON_BEFORE_HELLO);
+  }
+  if (0 == strcmp(line, "!")) {
+    return greeted ? GrinderTcpActionResult(GRINDER_TCP_ACTION_OFF) : GrinderTcpErrorResult(GRINDER_TCP_REASON_BEFORE_HELLO);
   }
   if (0 == strcmp(line, "OFF")) {
     return greeted ? GrinderTcpActionResult(GRINDER_TCP_ACTION_OFF) : GrinderTcpErrorResult(GRINDER_TCP_REASON_BEFORE_HELLO);

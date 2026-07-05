@@ -44,6 +44,10 @@
 #define GRINDER_TCP_MDNS_RETRY 5000
 #endif
 
+#ifndef GRINDER_TCP_MAX_BYTES_PER_LOOP
+#define GRINDER_TCP_MAX_BYTES_PER_LOOP 256
+#endif
+
 #ifndef GRINDER_TCP_MODEL
 #define GRINDER_TCP_MODEL "NOUS_A6T"
 #endif
@@ -74,6 +78,66 @@ struct {
 } GrinderTcp;
 
 void GrinderTcpAdvertise(void);
+void GrinderTcpStop(void);
+
+void GrinderTcpApplyQuietSettings(void) {
+  const bool mqtt_was_enabled = Settings->flag.mqtt_enabled;
+#ifdef USE_EMULATION
+  const bool emulation_was_enabled = Settings->flag2.emulation;
+#endif
+  Settings->flag.mqtt_add_global_info = 0;
+  Settings->flag.mqtt_enabled = 0;
+  Settings->flag.mqtt_response = 0;
+  Settings->flag.mqtt_power_retain = 0;
+  Settings->flag.mqtt_button_retain = 0;
+  Settings->flag.mqtt_switch_retain = 0;
+  Settings->flag.mqtt_sensor_retain = 0;
+  Settings->flag.mqtt_offline = 0;
+  Settings->flag.hass_discovery = 0;
+  Settings->flag.hass_light = 0;
+  Settings->flag.mqtt_serial = 0;
+  Settings->flag.mqtt_serial_raw = 0;
+  Settings->flag3.timers_enable = 0;
+  Settings->flag3.mdns_enabled = 1;
+  Settings->flag3.hass_tele_on_power = 0;
+  Settings->flag3.mqtt_buttons = 0;
+  Settings->flag3.no_hold_retain = 1;
+  Settings->flag3.tuya_serial_mqtt_publish = 0;
+  Settings->flag3.grouptopic_mode = 0;
+  Settings->flag4.awsiot_shadow = 0;
+  Settings->flag4.device_groups_enabled = 0;
+  Settings->flag4.multiple_device_groups = 0;
+  Settings->flag4.zigbee_distinct_topics = 0;
+  Settings->flag4.mqtt_tls = 0;
+  Settings->flag4.mqtt_no_retain = 1;
+  Settings->flag5.mqtt_switches = 0;
+  Settings->flag5.mi32_enable = 0;
+  Settings->flag5.mqtt_state_retain = 0;
+  Settings->flag5.mqtt_info_retain = 0;
+  Settings->flag5.mqtt_status_retain = 0;
+  Settings->flag6.mqtt_disable_publish = 1;
+  Settings->flag6.mqtt_disable_modbus = 1;
+  Settings->flag6.matter_enabled = 0;
+  Settings->flag6.berry_no_autoexec = 1;
+  Settings->flag6.wizmote_enabled = 0;
+  Settings->flag2.emulation = EMUL_NONE;
+  Settings->rule_enabled = 0;
+  Settings->rule_once = 0;
+  if (mqtt_was_enabled) {
+    MqttDisconnect();
+  }
+#ifdef USE_EMULATION
+  if (emulation_was_enabled) {
+    UdpDisconnect();
+  }
+#endif
+}
+
+void GrinderTcpNeutralizePowerDelay(void) {
+  Settings->param[P_POWER_ON_DELAY2] = 0;
+  TasmotaGlobal.power_on_delay = 0;
+  TasmotaGlobal.power_on_delay_state = 0;
+}
 
 void GrinderTcpFormatMac(char *output, const size_t output_size) {
 #ifdef ESP32
@@ -106,9 +170,18 @@ bool GrinderTcpRelayOwned(void) {
   return GrinderTcp.client_open && GrinderTcp.greeted && GrinderTcp.authorized_on && !GrinderTcp.close_pending;
 }
 
+bool GrinderTcpRelayHardwareSupported(void) {
+  return (1 == TasmotaGlobal.devices_present) &&
+         PinUsed(GPIO_REL1, 0) &&
+         !PinUsed(GPIO_REL1, 1) &&
+         !TasmotaGlobal.rel_bistable;
+}
+
 void GrinderTcpRelayOffDirect(void) {
   GrinderTcp.authorized_on = false;
+  GrinderTcpNeutralizePowerDelay();
   TasmotaGlobal.power &= (POWER_MASK ^ 1);
+  TasmotaGlobal.last_power &= (POWER_MASK ^ 1);
   TasmotaGlobal.blink_mask &= (POWER_MASK ^ 1);
   if (PinUsed(GPIO_REL1, 0)) {
     DigitalWrite(GPIO_REL1, 0, bitRead(TasmotaGlobal.rel_inverted, 0) ? 1 : 0);
@@ -116,7 +189,11 @@ void GrinderTcpRelayOffDirect(void) {
 }
 
 void GrinderTcpRelayOff(void) {
-  GrinderTcp.authorized_on = false;
+  const bool sync_state = GrinderTcpRelayStateOn() || GrinderTcp.authorized_on || (TasmotaGlobal.blink_mask & 1);
+  GrinderTcpRelayOffDirect();
+  if (!sync_state) {
+    return;
+  }
   ExecuteCommandPower(1, POWER_OFF_FORCE, SRC_IGNORE);
   GrinderTcpRelayOffDirect();
 }
@@ -126,6 +203,7 @@ void GrinderTcpRelayOnCommand(void) {
     GrinderTcpRelayOff();
     return;
   }
+  GrinderTcpNeutralizePowerDelay();
   GrinderTcp.authorized_on = true;
   GrinderTcp.tcp_power_command = true;
   ExecuteCommandPower(1, POWER_ON, SRC_IGNORE);
@@ -280,16 +358,32 @@ void GrinderTcpProcessLine(const char *line) {
   }
 }
 
+void GrinderTcpProcessEmergencyOff(void) {
+  GrinderTcp.last_rx = millis();
+  if (!GrinderTcp.greeted) {
+    GrinderTcpRelayOff();
+    GrinderTcpWriteErr(GrinderTcp.client, GRINDER_TCP_REASON_BEFORE_HELLO);
+    GrinderTcpScheduleActiveClose(false);
+    return;
+  }
+  GrinderTcpRelayOff();
+  GrinderTcpWriteOk(GrinderTcp.client);
+}
+
 void GrinderTcpReadClient(void) {
   if (!GrinderTcp.client_open || GrinderTcp.close_pending) {
     return;
   }
-  while (GrinderTcp.client_open && !GrinderTcp.close_pending && GrinderTcp.client.available()) {
+  uint32_t processed = 0;
+  while (GrinderTcp.client_open && !GrinderTcp.close_pending && GrinderTcp.client.available() && (processed < GRINDER_TCP_MAX_BYTES_PER_LOOP)) {
     const int value = GrinderTcp.client.read();
+    processed++;
     const GrinderTcpReadResult result = GrinderTcpLineRead(&GrinderTcp.reader, (uint8_t)value);
     if (GRINDER_TCP_READ_LINE == result) {
       GrinderTcpProcessLine(GrinderTcp.reader.line);
       GrinderTcpLineReset(&GrinderTcp.reader);
+    } else if (GRINDER_TCP_READ_EMERGENCY_OFF == result) {
+      GrinderTcpProcessEmergencyOff();
     } else if (GRINDER_TCP_READ_OVERFLOW == result) {
       GrinderTcpRelayOff();
       GrinderTcpWriteErr(GrinderTcp.client, GRINDER_TCP_REASON_LINE_OVERFLOW);
@@ -345,19 +439,31 @@ void GrinderTcpEnforceRelayOwnership(void) {
   }
 }
 
+void GrinderTcpKeepAwakeWhileGrinding(void) {
+  if (GrinderTcpRelayOwned() && GrinderTcpRelayStateOn() && (TasmotaGlobal.skip_sleep < 1)) {
+    TasmotaGlobal.skip_sleep = 1;
+  }
+}
+
 void GrinderTcpLoop(void) {
+  GrinderTcpApplyQuietSettings();
   GrinderTcpFinishActiveClose();
   GrinderTcpFinishClosingClients();
-  if (GrinderTcp.server_open) {
+  if (GrinderTcp.server_open && !GrinderTcpRelayHardwareSupported()) {
+    GrinderTcpStop();
+    return;
+  }
+  GrinderTcpReadClient();
+  GrinderTcpCheckTimeout();
+  GrinderTcpEnforceRelayOwnership();
+  GrinderTcpKeepAwakeWhileGrinding();
+  GrinderTcpPollServer();
+  if (GrinderTcp.server_open && !GrinderTcpRelayStateOn()) {
     if (!Mdns.begun) {
       GrinderTcp.advertised = false;
     }
     GrinderTcpAdvertise();
   }
-  GrinderTcpReadClient();
-  GrinderTcpCheckTimeout();
-  GrinderTcpPollServer();
-  GrinderTcpEnforceRelayOwnership();
 }
 
 void GrinderTcpEnsureMdns(void) {
@@ -412,9 +518,15 @@ void GrinderTcpStart(void) {
     AddLog(LOG_LEVEL_ERROR, PSTR("GTC: Invalid MAC"));
     return;
   }
+  if (!GrinderTcpRelayHardwareSupported()) {
+    GrinderTcpRelayOff();
+    AddLog(LOG_LEVEL_ERROR, PSTR("GTC: Unsupported relay layout"));
+    return;
+  }
   if (GrinderTcp.server_open) {
     return;
   }
+  GrinderTcpNeutralizePowerDelay();
   GrinderTcpServer.begin();
   GrinderTcpServer.setNoDelay(true);
   GrinderTcp.server_open = true;
@@ -444,16 +556,20 @@ void GrinderTcpStop(void) {
 }
 
 void GrinderTcpPreInit(void) {
+  GrinderTcpApplyQuietSettings();
   Settings->poweronstate = POWER_ALL_OFF;
   Settings->power = 0;
   TasmotaGlobal.power = 0;
-  Settings->flag3.mdns_enabled = 1;
+  TasmotaGlobal.last_power = 0;
   GrinderTcp.authorized_on = false;
+  GrinderTcpNeutralizePowerDelay();
 }
 
 void GrinderTcpInit(void) {
+  GrinderTcpApplyQuietSettings();
   GrinderTcpCacheIdentity();
   GrinderTcpLineReset(&GrinderTcp.reader);
+  GrinderTcpNeutralizePowerDelay();
   GrinderTcpRelayOff();
 }
 
@@ -487,6 +603,7 @@ bool Xdrv95(uint32_t function) {
       break;
     case FUNC_NETWORK_UP:
       if (!TasmotaGlobal.restart_flag) {
+        GrinderTcpApplyQuietSettings();
         GrinderTcpStart();
       }
       break;

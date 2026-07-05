@@ -27,11 +27,13 @@ static void TestMacValidation(void) {
 static void TestParser(void) {
   ExpectAction("HELLO A4:C1:38:12:34:56", false, GRINDER_TCP_ACTION_HELLO);
   ExpectAction("PING", true, GRINDER_TCP_ACTION_PING);
+  ExpectAction("!", true, GRINDER_TCP_ACTION_OFF);
   ExpectAction("OFF", true, GRINDER_TCP_ACTION_OFF);
   ExpectAction("ON", true, GRINDER_TCP_ACTION_ON);
   ExpectAction("STATE", true, GRINDER_TCP_ACTION_STATE);
   ExpectAction("BYE", true, GRINDER_TCP_ACTION_BYE);
   ExpectError("PING", false, GRINDER_TCP_REASON_BEFORE_HELLO);
+  ExpectError("!", false, GRINDER_TCP_REASON_BEFORE_HELLO);
   ExpectError("HELLO", false, GRINDER_TCP_REASON_BAD_HELLO);
   ExpectError("HELLO a4:C1:38:12:34:56", false, GRINDER_TCP_REASON_BAD_MAC);
   ExpectError("HELLO A4:C1:38:12:34:56", true, GRINDER_TCP_REASON_DUPLICATE_HELLO);
@@ -69,6 +71,19 @@ static void TestLineReader(void) {
     assert(GRINDER_TCP_READ_NONE == GrinderTcpLineRead(&reader, 'A'));
   }
   assert(GRINDER_TCP_READ_OVERFLOW == GrinderTcpLineRead(&reader, 'A'));
+  GrinderTcpLineReset(&reader);
+  assert(GRINDER_TCP_READ_EMERGENCY_OFF == GrinderTcpLineRead(&reader, '!'));
+  assert(GRINDER_TCP_READ_NONE == GrinderTcpLineRead(&reader, '\r'));
+  assert(GRINDER_TCP_READ_NONE == GrinderTcpLineRead(&reader, '\n'));
+  assert(GRINDER_TCP_READ_NONE == GrinderTcpLineRead(&reader, 'P'));
+  assert(GRINDER_TCP_READ_NONE == GrinderTcpLineRead(&reader, 'I'));
+  assert(GRINDER_TCP_READ_NONE == GrinderTcpLineRead(&reader, 'N'));
+  assert(GRINDER_TCP_READ_NONE == GrinderTcpLineRead(&reader, 'G'));
+  assert(GRINDER_TCP_READ_LINE == GrinderTcpLineRead(&reader, '\n'));
+  assert(0 == strcmp(reader.line, "PING"));
+  GrinderTcpLineReset(&reader);
+  assert(GRINDER_TCP_READ_NONE == GrinderTcpLineRead(&reader, 'P'));
+  assert(GRINDER_TCP_READ_INVALID == GrinderTcpLineRead(&reader, '!'));
   GrinderTcpLineReset(&reader);
   assert(GRINDER_TCP_READ_INVALID == GrinderTcpLineRead(&reader, 1));
 }
