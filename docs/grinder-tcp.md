@@ -106,20 +106,81 @@ The scale must verify the returned `plug_mac` against its selected plug MAC befo
 
 Before setup, flash the plug, leave the grinder disconnected, and confirm the Tasmota web UI shows `Power1 OFF`.
 
+The HDS grinder mode lets the scale switch the grinder plug on and off. The grinder itself still needs to be ready to run. This feature controls plug power, not the physical grinder switch.
+
+The scale:
+
+- starts the plug only after the empty cup is stable
+- stops the plug when the dose reaches the cutoff
+- waits for cup removal before preparing the next dose
+- learns a better safety value from normal shots over time
+- keeps normal weighing responsive when the plug is offline
+- enters a fail-safe error if the plug connection is lost while grinding
+
 On the HDS scale:
 
-1. Put the scale and plug on the same Wi-Fi network.
-2. Open `Grinder Plug`.
-3. Enable grinder mode.
-4. Use `Select Plug`.
-5. Choose the plug by MAC address, for example `1C:69:20:0B:54:20`.
-6. Set `Target g`.
-7. Set `Safety g`; `0.2 g` is the default starting point.
-8. Set `Zero Range`; `-1.0 g` to `+1.0 g` is the default starting point.
-9. Run a dry cycle with no grinder load.
-10. Connect the grinder only after dry tests pass.
+1. Flash HDS firmware with grinder support.
+2. Put the scale and plug on the same Wi-Fi network.
+3. Open the HDS OLED menu.
+4. Open `Grinder Plug`.
+5. Select `Grinder On`.
+6. Select `Select Plug`.
+7. Choose the plug by MAC address, for example `1C:69:20:0B:54:20`.
+8. Set `Target g`, `Safety g`, and `Zero Range`.
+9. Leave the menu with `Back`.
+10. Run a dry cycle with no grinder load.
+11. Connect the grinder only after dry tests pass.
 
 The scale stores the selected plug MAC, not the IP address. mDNS, hostname, and the cached IP address are only used to find the plug again.
+
+`Grinder On` forces Wi-Fi on boot. From the normal weight view, hold both buttons for 500 ms to open the `Grinder Plug` menu when grinder mode is on. Use `Target g` there for quick dose changes.
+
+Default HDS settings:
+
+```text
+Grinder: Off
+Target: 15.0 g
+Safety: 0.2 g
+Zero range: -1.0 g to 1.0 g
+Zero hold: 1000 ms
+Target tolerance: 0.5 g
+```
+
+The HDS cutoff threshold is:
+
+```text
+target grams - safety grams
+```
+
+The current HDS firmware does not use latency compensation. Adaptive safety is the early-stop compensation.
+
+Normal use:
+
+1. Turn grinder mode on and select a plug.
+2. Put the empty dosing cup on the scale.
+3. Tare the scale.
+4. Wait until the cup is stable inside the zero range.
+5. The scale sends `ON` to the plug.
+6. Start the grinder physically if needed.
+7. The scale sends fast OFF (`!`) when cutoff is reached.
+8. Remove the filled cup.
+9. Put the empty cup back.
+10. The scale rearms after the zero hold time.
+
+Cutoff is blocked until all of these are true:
+
+- tare is not pending
+- weight has left zero range
+- 1500 ms passed since leaving zero range
+- a real grind pattern was confirmed
+- weight is at or above `target - safety`
+- the selected plug connection is still valid
+
+If a cup or setup mass is placed on the scale before tare, the scale shows `tare cup` and blocks cutoff until the user tares or the weight returns to zero range.
+
+After a valid grind, the scale compares final weight to target and adjusts safety for later shots. The adaptive value averages the last three valid recommendations and saves before deep sleep instead of on every loop.
+
+Safety learning is skipped when the shot does not look like a normal grind: final weight never stabilizes, the cup is removed too early, weight drops after OFF, the grind stalls below target, average grind rate is too high, or the final result is too far from target.
 
 During dosing, the scale keeps one TCP connection open, sends heartbeat `PING` messages, sends `ON` only while armed, and sends `OFF` or `!` at cutoff. If the TCP connection is lost while grinding, the scale enters an error state and the plug firmware fails safe to `Power1 OFF`.
 
@@ -143,6 +204,49 @@ proto=1
 ```
 
 Multiple plugs share the service type. Their mDNS instance names are unique through the Tasmota hostname, and the scale must select by MAC.
+
+## HDS Troubleshooting
+
+If `Select Plug` finds nothing, check mDNS from another machine:
+
+```powershell
+dns-sd -B _grinderplug._tcp local
+dns-sd -L "INSTANCE NAME HERE" _grinderplug._tcp local
+```
+
+Expected TXT data:
+
+```text
+port=31980
+mac=<plug_mac>
+model=<build_model>
+proto=1
+```
+
+If `_http._tcp` appears but `_grinderplug._tcp` does not, the plug service advertisement is wrong.
+
+If the scale shows `plug wait`, the selected plug cannot be reached. Check that the plug is powered, on the same WLAN, listening on port `31980`, and still using the saved hostname or cached IP. If the IP changed and hostname lookup does not recover it, run `Select Plug` again.
+
+If the scale shows `busy`, another scale or client is already connected. Disconnect that client or restart the plug.
+
+If the scale shows `wrong mac`, the TCP server answered with a MAC different from the selected plug MAC. The cached IP probably points to another device. Run `Select Plug` again.
+
+If the scale shows `grinder error`, it entered fail-safe mode. Common causes are lost plug connection while grinding, malformed TCP response, wrong plug MAC, plug `ERR`, `ON` timeout, or `OFF` timeout. The plug should turn `Power1 OFF` when the active TCP connection drops.
+
+If weighing must stay responsive while the plug is offline, do not run full discovery in the background. Runtime lookup should use only the saved IP and saved hostname with short timeouts. Full mDNS discovery belongs in manual `Select Plug`.
+
+If the scale does not rearm, remove the filled cup, return the empty cup, and wait until weight is stable inside zero range for the zero hold time. The default zero hold is 1000 ms.
+
+USB serial grinder logs use these prefixes:
+
+```text
+[grinder] connect
+[grinder] tx HELLO
+[grinder] rx OK
+[grinder] cutoff
+[grinder] safety learn
+[grinder] error
+```
 
 ## Build
 
