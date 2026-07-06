@@ -1,6 +1,6 @@
 # Tasmota Auto Doser Firmware
 
-Decent Espresso firmware for controlling a grinder or auto-doser plug from an HDS scale over a small local TCP protocol.
+Decent Espresso firmware for controlling a grinder with an Tasmota Wifi plug from an HDS scale over a small local TCP protocol.
 
 This is not a general Tasmota distribution. Official Tasmota binaries do not include the grinder TCP driver.
 
