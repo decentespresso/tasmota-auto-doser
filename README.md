@@ -3,6 +3,12 @@
 Alternative firmware for [ESP8266](https://en.wikipedia.org/wiki/ESP8266) and [ESP32](https://en.wikipedia.org/wiki/ESP32) based devices with **easy configuration using webUI, OTA updates, automation using timers or rules, expandability and entirely local control over MQTT, HTTP, Serial or KNX**.
 _Written for PlatformIO._
 
+## Grinder TCP fork
+
+This private fork adds a grinder-control firmware profile for classic ESP32 Tasmota devices with exactly one normal `Power1` relay. The tested target is the NOUS A6T using `tasmota32-nous-a6t-grinder`; the generic `tasmota32-grinder` image is for other classic ESP32 single-relay Tasmota devices after template validation.
+
+Read [docs/grinder-tcp.md](docs/grinder-tcp.md) for supported hardware, safety behavior, TCP protocol, mDNS discovery, build names, flashing notes, and smoke tests.
+
 [![GitHub version](https://img.shields.io/github/release/arendst/Tasmota.svg)](http://ota.tasmota.com/tasmota/release)
 [![GitHub download](https://img.shields.io/github/downloads/arendst/Tasmota/total.svg)](https://github.com/arendst/Tasmota/releases/latest)
 [![License](https://img.shields.io/github/license/arendst/Tasmota.svg)](LICENSE.txt)

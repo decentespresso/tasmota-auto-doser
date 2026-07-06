@@ -63,6 +63,10 @@ struct GrinderTcpDriverSim {
   uint32_t skip_sleep = 0;
   uint32_t mqtt_disconnect_count = 0;
   uint32_t udp_disconnect_count = 0;
+  uint32_t fake_power_driver_count = 0;
+  uint32_t normal_power_path_count = 0;
+  bool fake_power_driver_enabled = false;
+  bool tcp_power_command = false;
 
   bool RelayOwned(void) const {
     return connected && greeted && authorized_on && !close_pending;
@@ -90,6 +94,34 @@ struct GrinderTcpDriverSim {
     if (sync_state) {
       generic_off_count++;
       RelayOffDirect();
+    }
+  }
+
+  bool SetDevicePowerGuard(const bool rpower) {
+    if (!rpower) {
+      authorized_on = false;
+      return false;
+    }
+    if (tcp_power_command && RelayOwned()) {
+      return false;
+    }
+    RelayOffDirect();
+    return true;
+  }
+
+  void SetDevicePower(const bool rpower) {
+    if (SetDevicePowerGuard(rpower)) {
+      return;
+    }
+    if (fake_power_driver_enabled && rpower) {
+      fake_power_driver_count++;
+      relay_on = true;
+      return;
+    }
+    normal_power_path_count++;
+    relay_on = rpower;
+    if (!relay_on) {
+      authorized_on = false;
     }
   }
 
@@ -206,7 +238,12 @@ struct GrinderTcpDriverSim {
       case GRINDER_TCP_ACTION_ON:
         NeutralizePowerDelay();
         authorized_on = connected && greeted && !close_pending;
-        relay_on = authorized_on;
+        tcp_power_command = true;
+        SetDevicePower(authorized_on);
+        tcp_power_command = false;
+        if (!relay_on) {
+          authorized_on = false;
+        }
         EnforceOwnership();
         return FormatOk(relay_on);
       case GRINDER_TCP_ACTION_STATE:
@@ -221,12 +258,11 @@ struct GrinderTcpDriverSim {
   }
 
   void ExternalOn(void) {
-    relay_on = true;
-    RelayOffDirect();
+    SetDevicePower(true);
   }
 
   void ExternalOff(void) {
-    RelayOff();
+    SetDevicePower(false);
   }
 
   void DisconnectActive(void) {
@@ -318,6 +354,27 @@ static void TestExternalOnDuringTcpRunFailsOff(void) {
   sim.ExternalOn();
   assert(!sim.relay_on);
   assert(!sim.authorized_on);
+}
+
+static void TestPreDriverGuardBlocksEarlierDriver(void) {
+  GrinderTcpDriverSim sim;
+  sim.fake_power_driver_enabled = true;
+  sim.ExternalOn();
+  assert(!sim.relay_on);
+  assert(!sim.authorized_on);
+  assert(0 == sim.fake_power_driver_count);
+}
+
+static void TestAuthorizedTcpOnReachesEarlierDriver(void) {
+  GrinderTcpDriverSim sim;
+  sim.fake_power_driver_enabled = true;
+  assert(sim.Start());
+  assert("" == sim.Connect());
+  assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
+  assert(FormatOk(true) == sim.Send("ON"));
+  assert(sim.relay_on);
+  assert(sim.authorized_on);
+  assert(1 == sim.fake_power_driver_count);
 }
 
 static void TestDeferredByeClose(void) {
@@ -455,11 +512,23 @@ static void TestDuplicateHelloClosesWithOff(void) {
 }
 
 static void TestUnsupportedRelayLayoutRefusesStart(void) {
-  GrinderTcpDriverSim sim;
-  sim.devices_present = 2;
-  assert(!sim.Start());
-  assert(!sim.server_open);
-  assert(!sim.relay_on);
+  GrinderTcpDriverSim multi_relay;
+  multi_relay.devices_present = 2;
+  assert(!multi_relay.Start());
+  assert(!multi_relay.server_open);
+  assert(!multi_relay.relay_on);
+
+  GrinderTcpDriverSim missing_relay;
+  missing_relay.relay0_used = false;
+  assert(!missing_relay.Start());
+  assert(!missing_relay.server_open);
+  assert(!missing_relay.relay_on);
+
+  GrinderTcpDriverSim bistable_relay;
+  bistable_relay.rel_bistable = true;
+  assert(!bistable_relay.Start());
+  assert(!bistable_relay.server_open);
+  assert(!bistable_relay.relay_on);
 }
 
 static void TestPowerDelayClearedBeforeOn(void) {
@@ -520,6 +589,8 @@ int main(void) {
   TestExternalOnBlockedAfterHello();
   TestExternalOffClearsAuthorization();
   TestExternalOnDuringTcpRunFailsOff();
+  TestPreDriverGuardBlocksEarlierDriver();
+  TestAuthorizedTcpOnReachesEarlierDriver();
   TestDeferredByeClose();
   TestDisconnectTurnsOff();
   TestHeartbeatTimeoutTurnsOff();

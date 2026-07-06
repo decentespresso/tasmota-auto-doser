@@ -250,6 +250,10 @@ void SetLatchingRelay(power_t lpower, uint32_t state) {
   }
 }
 
+#ifdef USE_GRINDER_TCP
+bool GrinderTcpSetDevicePowerGuard(power_t rpower, uint32_t source);
+#endif
+
 void SetDevicePower(power_t rpower, uint32_t source) {
   if (TasmotaGlobal.power_on_delay) {
     TasmotaGlobal.power_on_delay_state = rpower;
@@ -285,6 +289,12 @@ void SetDevicePower(power_t rpower, uint32_t source) {
   if (rpower) {                           // Any power set
     TasmotaGlobal.last_power = rpower;
   }
+
+#ifdef USE_GRINDER_TCP
+  if (GrinderTcpSetDevicePowerGuard(rpower, source)) {
+    return;
+  }
+#endif
 
   XdrvMailbox.index = rpower;
   XdrvXsnsCall(FUNC_SET_POWER);           // Signal power state

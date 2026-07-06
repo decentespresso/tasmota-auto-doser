@@ -261,7 +261,7 @@ def main():
     parser.add_argument("--service", default="_grinderplug._tcp.local")
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--expected-mac", default="1C:69:20:0B:54:20")
-    parser.add_argument("--expected-model", default="NOUS_A6T")
+    parser.add_argument("--expected-model", default="")
     parser.add_argument("--expected-proto", default="1")
     parser.add_argument("--target-ip", default="192.168.178.30")
     parser.add_argument("--interface-ip", default="")
@@ -286,7 +286,7 @@ def main():
         "srv": bool(srv_records),
         "txt": bool(txt_records),
         "mac": txt_values.get("mac") == args.expected_mac,
-        "model": txt_values.get("model") == args.expected_model,
+        "model": not args.expected_model or txt_values.get("model") == args.expected_model,
         "proto": txt_values.get("proto") == args.expected_proto,
     }
 

@@ -68,6 +68,13 @@ function Send-GrinderCommand($conn, $cmd) {
   $conn.Reader.ReadLine()
 }
 
+function Send-GrinderFastOff($conn) {
+  $stream = $conn.Client.GetStream()
+  $stream.WriteByte([byte][char]'!')
+  $stream.Flush()
+  $conn.Reader.ReadLine()
+}
+
 function Close-GrinderClient($conn) {
   if ($null -ne $conn) {
     try {
@@ -106,6 +113,32 @@ function Test-HttpOnBlocked() {
   $after1250 = Get-PowerState
   $pass = ($before -eq 'OFF') -and ($after250 -eq 'OFF') -and ($after1250 -eq 'OFF')
   Add-Result 'HTTP Power1 ON blocked' $pass "before=$before response=$($response.POWER) after250ms=$after250 after1250ms=$after1250"
+}
+
+function Test-HttpToggleBlocked() {
+  Set-RelayOff
+  Start-Sleep -Milliseconds 250
+  $before = Get-PowerState
+  $response = Invoke-TasmotaCommand 'Power1 TOGGLE'
+  Start-Sleep -Milliseconds 250
+  $after250 = Get-PowerState
+  Start-Sleep -Milliseconds 1000
+  $after1250 = Get-PowerState
+  $pass = ($before -eq 'OFF') -and ($after250 -eq 'OFF') -and ($after1250 -eq 'OFF')
+  Add-Result 'HTTP Power1 TOGGLE blocked' $pass "before=$before response=$($response.POWER) after250ms=$after250 after1250ms=$after1250"
+}
+
+function Test-BacklogOnBlocked() {
+  Set-RelayOff
+  Start-Sleep -Milliseconds 250
+  $before = Get-PowerState
+  $null = Invoke-TasmotaCommand 'Backlog Power1 ON'
+  Start-Sleep -Milliseconds 250
+  $after250 = Get-PowerState
+  Start-Sleep -Milliseconds 1000
+  $after1250 = Get-PowerState
+  $pass = ($before -eq 'OFF') -and ($after250 -eq 'OFF') -and ($after1250 -eq 'OFF')
+  Add-Result 'Backlog Power1 ON blocked' $pass "before=$before after250ms=$after250 after1250ms=$after1250"
 }
 
 function Test-BadHello() {
@@ -156,13 +189,13 @@ function Test-TcpOnOff() {
     $on = Send-GrinderCommand $conn 'ON'
     $onPower = Wait-PowerState 'ON' 1500
     $stateOn = Send-GrinderCommand $conn 'STATE'
-    $off = Send-GrinderCommand $conn 'OFF'
+    $off = Send-GrinderFastOff $conn
     $offPower = Wait-PowerState 'OFF' 1500
     $dupOff = Send-GrinderCommand $conn 'OFF'
     $dupOffPower = Wait-PowerState 'OFF' 1500
     $bye = Send-GrinderCommand $conn 'BYE'
     $pass = (Is-OkState $hello 'OFF') -and (Is-OkState $on 'ON') -and $onPower.Reached -and (Is-OkState $stateOn 'ON') -and (Is-OkState $off 'OFF') -and $offPower.Reached -and (Is-OkState $dupOff 'OFF') -and $dupOffPower.Reached -and (Is-OkState $bye 'OFF')
-    Add-Result 'TCP ON OFF STATE duplicate OFF' $pass "hello=$hello on=$on onPower=$($onPower.Last) state=$stateOn off=$off offPower=$($offPower.Last) dupOff=$dupOff dupOffPower=$($dupOffPower.Last) bye=$bye"
+    Add-Result 'TCP ON fast OFF STATE duplicate OFF' $pass "hello=$hello on=$on onPower=$($onPower.Last) state=$stateOn off=$off offPower=$($offPower.Last) dupOff=$dupOff dupOffPower=$($dupOffPower.Last) bye=$bye"
   } finally {
     Close-GrinderClient $conn
   }
@@ -223,6 +256,8 @@ function Test-HeartbeatTimeout() {
 try {
   Test-InitialState
   Test-HttpOnBlocked
+  Test-HttpToggleBlocked
+  Test-BacklogOnBlocked
   Test-BadHello
   Test-OneClientRule
   Test-TcpOnOff

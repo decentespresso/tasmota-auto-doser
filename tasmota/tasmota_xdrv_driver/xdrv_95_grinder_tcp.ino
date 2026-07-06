@@ -579,8 +579,9 @@ void GrinderTcpObservePower(void) {
   }
 }
 
-bool GrinderTcpSetDevicePower(void) {
-  if (!(XdrvMailbox.index & 1)) {
+bool GrinderTcpSetDevicePowerGuard(power_t rpower, uint32_t source) {
+  (void)source;
+  if (!(rpower & 1)) {
     GrinderTcp.authorized_on = false;
     return false;
   }
@@ -589,6 +590,10 @@ bool GrinderTcpSetDevicePower(void) {
   }
   GrinderTcpRelayOffDirect();
   return true;
+}
+
+bool GrinderTcpSetDevicePower(void) {
+  return GrinderTcpSetDevicePowerGuard(XdrvMailbox.index, XdrvMailbox.payload);
 }
 
 bool Xdrv95(uint32_t function) {
