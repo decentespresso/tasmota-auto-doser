@@ -1,0 +1,86 @@
+name: Grinder firmware release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "grinder-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: grinder-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build and run grinder host tests
+        run: |
+          mkdir -p build/host-tests
+          g++ -std=c++17 tools/grinder_tcp_protocol_test.cpp -o build/host-tests/grinder_tcp_protocol_test
+          g++ -std=c++17 tools/grinder_tcp_driver_sim_test.cpp -o build/host-tests/grinder_tcp_driver_sim_test
+          ./build/host-tests/grinder_tcp_protocol_test
+          ./build/host-tests/grinder_tcp_driver_sim_test
+
+  firmware:
+    needs: host-tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - tasmota32-nous-a6t-grinder
+          - tasmota32-grinder
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: latest
+          enable-cache: false
+      - name: Install dependencies
+        run: |
+          uv pip install --system pioarduino
+          cp ./platformio_override_sample.ini ./platformio_override.ini
+      - name: Build firmware
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: platformio run -e ${{ matrix.variant }}
+      - name: Collect firmware assets
+        run: |
+          mkdir -p release
+          cp build_output/firmware/${{ matrix.variant }}.bin release/${{ matrix.variant }}.bin
+          cp build_output/firmware/${{ matrix.variant }}.factory.bin release/${{ matrix.variant }}.factory.bin
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.variant }}
+          path: release/*.bin
+          if-no-files-found: error
+
+  release:
+    needs: firmware
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/grinder-v')
+    steps:
+      - name: Download firmware artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: release
+          merge-multiple: true
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG_NAME" >/dev/null 2>&1 || gh release create "$TAG_NAME" --title "$TAG_NAME" --notes "Grinder TCP firmware release."
+          gh release upload "$TAG_NAME" release/*.bin --clobber

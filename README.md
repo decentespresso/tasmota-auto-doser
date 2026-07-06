@@ -9,10 +9,9 @@ This private fork adds a grinder-control firmware profile for classic ESP32 Tasm
 
 Read [docs/grinder-tcp.md](docs/grinder-tcp.md) for supported hardware, safety behavior, TCP protocol, mDNS discovery, build names, flashing notes, and smoke tests.
 
-[![GitHub version](https://img.shields.io/github/release/arendst/Tasmota.svg)](http://ota.tasmota.com/tasmota/release)
-[![GitHub download](https://img.shields.io/github/downloads/arendst/Tasmota/total.svg)](https://github.com/arendst/Tasmota/releases/latest)
-[![License](https://img.shields.io/github/license/arendst/Tasmota.svg)](LICENSE.txt)
-[![Discord](https://img.shields.io/discord/479389167382691863.svg?logo=discord&logoColor=white&color=5865F2&label=Discord)](https://discord.gg/Ks2Kzd4)
+[![Grinder release](https://img.shields.io/github/v/release/ODevStudio/tasmota-nous-a6t-grinder?filter=grinder-v*)](https://github.com/ODevStudio/tasmota-nous-a6t-grinder/releases/latest)
+[![Grinder release build](https://github.com/ODevStudio/tasmota-nous-a6t-grinder/actions/workflows/grinder_release.yml/badge.svg)](https://github.com/ODevStudio/tasmota-nous-a6t-grinder/actions/workflows/grinder_release.yml)
+[![License](https://img.shields.io/github/license/ODevStudio/tasmota-nous-a6t-grinder.svg)](LICENSE.txt)
 
 <hr></hr>
 
@@ -22,7 +21,7 @@ Read [docs/grinder-tcp.md](docs/grinder-tcp.md) for supported hardware, safety b
 
 ## Easy install
 
-Easy initial installation of Tasmota can be performed using the [Tasmota WebInstaller](https://tasmota.github.io/install/).
+Easy initial installation of stock Tasmota can be performed using the [Tasmota WebInstaller](https://tasmota.github.io/install/). Grinder TCP firmware is published separately by this fork.
 
 If you like **Tasmota**, give it a star, or fork it and contribute!
 
@@ -32,20 +31,15 @@ If you like **Tasmota**, give it a star, or fork it and contribute!
 
 See [RELEASENOTES.md](https://github.com/arendst/Tasmota/blob/master/RELEASENOTES.md) for release information.
 
-Firmware binaries can be downloaded from http://ota.tasmota.com/tasmota/release/ or http://ota.tasmota.com/tasmota32/release/ for ESP32 binaries.
+Grinder firmware binaries can be downloaded from this fork's [GitHub Releases](https://github.com/ODevStudio/tasmota-nous-a6t-grinder/releases/latest). Official Tasmota binaries do not include Grinder TCP.
 
 ## Development
-
-[![Dev Version](https://img.shields.io/badge/development%20version-v15.5.x.x-blue.svg)](https://github.com/arendst/Tasmota)
-[![Download Dev](https://img.shields.io/badge/download-development-yellow.svg)](http://ota.tasmota.com/tasmota/)
-[![Tasmota CI](https://github.com/arendst/Tasmota/actions/workflows/build_all_the_things.yml/badge.svg)](https://github.com/arendst/Tasmota/actions/workflows/build_all_the_things.yml)
-[![Build_development](https://github.com/arendst/Tasmota/actions/workflows/Tasmota_build_devel.yml/badge.svg)](https://github.com/arendst/Tasmota/actions/workflows/Tasmota_build_devel.yml)
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed change information.
 
 Unless your Tasmota powered device exhibits a problem or lacks a feature that you need, leave your device alone - it works so don’t make unnecessary changes! If the release version (i.e., the master branch) exhibits unexpected behaviour for your device and configuration, you should upgrade to the latest development version instead to see if your problem is resolved as some bugs in previous releases or development builds may already have been resolved.
 
-Every commit made to the development branch, which is compiling successfully, will post new binary files at http://ota.tasmota.com/tasmota/ (this web address can be used for OTA updates too). It is important to note that these binaries are based on the current development codebase. These commits are tested as much as is possible and are typically quite stable. However, it is infeasible to test on the hundreds of different types of devices with all the available configuration options permitted.
+This fork does not publish automatic OTA binaries to `ota.tasmota.com`. Tagged grinder builds are published on GitHub Releases, and manual workflow runs publish temporary GitHub Actions artifacts.
 
 Note that there is a chance, as with any upgrade, that the device may not function as expected. You must always account for the possibility that you may need to flash the device via the serial programming interface if the OTA upgrade fails. Even with the master release, you should always attempt to test the device or a similar prototype before upgrading a device which is in production or is hard to reach. And, as always, make a backup of the device configuration before beginning any firmware update.
 
@@ -62,7 +56,14 @@ We don't take any responsibility nor liability for using this software nor for t
 Please do not ask to add new devices unless it requires additional code for new features. If the device is not listed as a module, try using [Templates](https://tasmota.github.io/docs/Templates) first. If it is not listed in the [Tasmota Device Templates Repository](http://templates.blakadder.com) create your own [Template](https://tasmota.github.io/docs/Templates#creating-your-template).
 
 ## Quick Install
-Download one of the released binaries from http://ota.tasmota.com/tasmota/release/ or http://ota.tasmota.com/tasmota32/release/ and flash it to your hardware [using our installation guide](https://tasmota.github.io/docs/Getting-Started).
+Download grinder firmware from this fork's [GitHub Releases](https://github.com/ODevStudio/tasmota-nous-a6t-grinder/releases/latest):
+
+- `tasmota32-nous-a6t-grinder.bin` for NOUS A6T.
+- `tasmota32-grinder.bin` for validated classic ESP32 single-relay devices.
+
+Upload the `.bin` file through the Tasmota web UI firmware upgrade page. Do not upload `.factory.bin` through the web UI; factory images are for serial recovery only. Official Tasmota release binaries do not include Grinder TCP.
+
+Read [docs/grinder-tcp.md](docs/grinder-tcp.md) before flashing.
 
 ## Important User Compilation Information
 If you want to compile Tasmota yourself keep in mind the following:

@@ -125,6 +125,8 @@ Multiple plugs share the service type. Their mDNS instance names are unique thro
 
 ## Build
 
+For normal flashing, download a release asset from this fork's GitHub Releases. Use `tasmota32-nous-a6t-grinder.bin` for NOUS A6T and `tasmota32-grinder.bin` for validated generic classic ESP32 single-relay plugs.
+
 ```powershell
 $env:PYTHONUTF8='1'
 $env:PYTHONIOENCODING='utf-8'
@@ -133,7 +135,7 @@ pio run -e tasmota32-nous-a6t-grinder
 pio run -e tasmota32-grinder
 ```
 
-Use the generated OTA `firmware.bin` for web upload. Do not upload `factory.bin` through the Tasmota web UI; factory images are for serial flashing or recovery.
+Use the generated OTA `.bin` from `build_output/firmware` for web upload. Do not upload `.factory.bin` through the Tasmota web UI; factory images are for serial flashing or recovery.
 
 ## Smoke Tests
 
