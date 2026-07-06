@@ -1,6 +1,6 @@
 # Grinder TCP Firmware
 
-This fork adds a native Tasmota driver for grinder control from a scale over a local TCP connection. It is meant for trusted LAN use only. The plug MAC is an identity label, not authentication.
+This project adds a native Tasmota driver for grinder control from an HDS scale over a local TCP connection. It is meant for trusted LAN use only. The plug MAC is an identity label, not authentication.
 
 ## Supported Firmware Builds
 
@@ -9,7 +9,7 @@ This fork adds a native Tasmota driver for grinder control from a scale over a l
 | `tasmota32-nous-a6t-grinder` | `nous-a6t-grinder` | Tested NOUS A6T compatibility build |
 | `tasmota32-grinder` | `grinder-tcp32` | Generic classic ESP32 single-relay build |
 
-Both builds enable `USE_GRINDER_TCP`, listen on TCP port `31980`, advertise `_grinderplug._tcp.local`, and keep Web UI/OTA available.
+Both builds enable `USE_GRINDER_TCP`, listen on TCP port `31980`, advertise `_grinderplug._tcp.local`, and keep Web UI file upload updates available.
 
 The generic build is for classic ESP32 Tasmota devices only. It is not for ESP8266, ESP32-C3, ESP32-S2, ESP32-S3, ESP32-C6, dimmers, shutters, multi-relay devices, or bistable relay devices. Those chips need their own Tasmota binary families, and unsupported relay layouts are rejected at runtime.
 
@@ -102,6 +102,27 @@ Only one pending or active TCP client is allowed. A second client receives `BUSY
 
 The scale must verify the returned `plug_mac` against its selected plug MAC before using the plug.
 
+## HDS Scale Setup
+
+Before setup, flash the plug, leave the grinder disconnected, and confirm the Tasmota web UI shows `Power1 OFF`.
+
+On the HDS scale:
+
+1. Put the scale and plug on the same Wi-Fi network.
+2. Open `Grinder Plug`.
+3. Enable grinder mode.
+4. Use `Select Plug`.
+5. Choose the plug by MAC address, for example `1C:69:20:0B:54:20`.
+6. Set `Target g`.
+7. Set `Safety g`; `0.2 g` is the default starting point.
+8. Set `Zero Range`; `-1.0 g` to `+1.0 g` is the default starting point.
+9. Run a dry cycle with no grinder load.
+10. Connect the grinder only after dry tests pass.
+
+The scale stores the selected plug MAC, not the IP address. mDNS, hostname, and the cached IP address are only used to find the plug again.
+
+During dosing, the scale keeps one TCP connection open, sends heartbeat `PING` messages, sends `ON` only while armed, and sends `OFF` or `!` at cutoff. If the TCP connection is lost while grinding, the scale enters an error state and the plug firmware fails safe to `Power1 OFF`.
+
 ## Discovery
 
 The scale stores and shows the plug MAC address as the human-readable plug name, for example `1C:69:20:0B:54:20`. You can view the plug MAC on the Tasmota web UI main page or status pages before selecting it on the scale.
@@ -125,7 +146,7 @@ Multiple plugs share the service type. Their mDNS instance names are unique thro
 
 ## Build
 
-For normal flashing, download a release asset from this fork's GitHub Releases. Use `tasmota32-nous-a6t-grinder.bin` for NOUS A6T and `tasmota32-grinder.bin` for validated generic classic ESP32 single-relay plugs.
+For normal flashing, download a release asset from [GitHub Releases](https://github.com/decentespresso/tasmota-auto-doser/releases/latest). Use `tasmota32-nous-a6t-grinder.bin` for NOUS A6T and `tasmota32-grinder.bin` for validated generic classic ESP32 single-relay plugs.
 
 ```powershell
 $env:PYTHONUTF8='1'
@@ -135,7 +156,7 @@ pio run -e tasmota32-nous-a6t-grinder
 pio run -e tasmota32-grinder
 ```
 
-Use the generated OTA `.bin` from `build_output/firmware` for web upload. Do not upload `.factory.bin` through the Tasmota web UI; factory images are for serial flashing or recovery.
+Use the generated OTA `.bin` from `build_output/firmware` for web upload. Factory images are not published in normal releases; maintainers can build them from source for serial recovery.
 
 ## Smoke Tests
 
