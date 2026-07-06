@@ -19,6 +19,8 @@ Before flashing, disconnect the grinder or use a harmless load. Back up the curr
 
 Do not use official Tasmota OTA binaries for grinder control. They do not contain this TCP driver.
 
+You also need HDS firmware with grinder support. The plug firmware only switches power; the HDS scale decides when to start and stop by weight.
+
 ## Supported Devices
 
 Supported now:
@@ -46,20 +48,27 @@ The relay is off by default and may only turn on while one TCP client owns the p
 
 Non-TCP `Power1 ON` attempts from the web UI, HTTP API, MQTT, buttons, rules, timers, device groups, or retained state are blocked or immediately forced off.
 
+On the HDS side, grinder mode starts only after the empty cup is stable, stops at cutoff, waits for cup removal before rearming, learns adaptive safety from valid shots, and keeps weighing responsive when the plug is offline.
+
 This is intended only for a trusted local WLAN. The plug MAC is an identity label, not authentication.
 
 ## HDS Scale Setup
 
-On the scale:
+First safe dry run:
 
-1. Put the HDS and plug on the same Wi-Fi network.
-2. Open the HDS setup menu and enter `Grinder Plug`.
-3. Enable grinder mode.
-4. Use `Select Plug` and choose the plug MAC shown by discovery.
-5. Set `Target g`, `Safety g`, and `Zero Range`.
-6. Dry-test with no grinder load before connecting the actual grinder.
+1. Flash the plug and leave the grinder disconnected.
+2. Confirm the Tasmota web UI shows `Power1 OFF`.
+3. Put the HDS and plug on the same Wi-Fi network.
+4. Open the HDS setup menu and enter `Grinder Plug`.
+5. Enable grinder mode.
+6. Use `Select Plug` and choose the plug MAC shown by discovery.
+7. Set `Target g`, `Safety g`, and `Zero Range`.
+8. Dry-test with no grinder load.
+9. Connect the grinder only after the dry test passes.
 
 The HDS stores the selected plug by MAC address and verifies the plug MAC returned by the TCP protocol before using it. The plug MAC is visible on the Tasmota web UI status pages.
+
+Default HDS settings: `Target 15.0 g`, `Safety 0.2 g`, `Zero range -1.0 g to 1.0 g`, `Zero hold 1000 ms`.
 
 Full setup notes are in [docs/grinder-tcp.md](docs/grinder-tcp.md).
 
