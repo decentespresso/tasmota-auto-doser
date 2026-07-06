@@ -1,12 +1,10 @@
 # Tasmota Auto Doser Firmware
 
-Decent Espresso firmware for controlling a grinder with an Tasmota Wifi plug from an HDS scale over a small local TCP protocol.
+Decent Espresso firmware for controlling a grinder with a Tasmota Wi-Fi plug from an HDS scale over a small local TCP protocol.
 
 This is not a general Tasmota distribution. Official Tasmota binaries do not include the grinder TCP driver.
 
-[![Release](https://img.shields.io/github/v/release/decentespresso/tasmota-auto-doser)](https://github.com/decentespresso/tasmota-auto-doser/releases/latest)
-[![Release build](https://github.com/decentespresso/tasmota-auto-doser/actions/workflows/grinder_release.yml/badge.svg)](https://github.com/decentespresso/tasmota-auto-doser/actions/workflows/grinder_release.yml)
-[![License](https://img.shields.io/github/license/decentespresso/tasmota-auto-doser.svg)](LICENSE.txt)
+Latest firmware: [GitHub Releases](https://github.com/decentespresso/tasmota-auto-doser/releases/latest). License: [GPL-3.0-only](LICENSE.txt).
 
 ## Quick Install
 
