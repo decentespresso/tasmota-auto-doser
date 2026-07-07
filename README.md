@@ -62,13 +62,13 @@ First safe dry run:
 4. Open the HDS setup menu and enter `Grinder Plug`.
 5. Enable grinder mode.
 6. Use `Select Plug` and choose the plug MAC shown by discovery.
-7. Set `Target g`, `Safety g`, and `Zero Range`.
-8. Dry-test with no grinder load.
+7. Set `Target g` , `Safety g`, and `Zero Range`.
+8. Dry-test with no grinder load (Target - Safety g is the stop point of the plug).
 9. Connect the grinder only after the dry test passes.
 
 The HDS stores the selected plug by MAC address and verifies the plug MAC returned by the TCP protocol before using it. The plug MAC is visible on the Tasmota web UI status pages.
 
-Default HDS settings: `Target 15.0 g`, `Safety 0.2 g`, `Zero range -1.0 g to 1.0 g`, `Zero hold 1000 ms`.
+Default HDS settings: `Target 15.0 g`, `Safety 2.0 g`, `Zero range -1.0 g to 1.0 g`, `Zero hold 1000 ms`.
 
 Full setup notes are in [docs/grinder-tcp.md](docs/grinder-tcp.md).
 
