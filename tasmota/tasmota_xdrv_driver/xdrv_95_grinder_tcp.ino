@@ -468,8 +468,12 @@ void GrinderTcpLoop(void) {
 
 void GrinderTcpEnsureMdns(void) {
   Settings->flag3.mdns_enabled = 1;
+  const bool was_begun = Mdns.begun;
   if (!Mdns.begun) {
     StartMdns();
+  }
+  if (!was_begun && Mdns.begun) {
+    GrinderTcp.advertised = false;
   }
 #if defined(USE_WEBSERVER) && defined(WEBSERVER_ADVERTISE)
   if ((1 == Mdns.begun) && Settings->webserver) {
@@ -486,15 +490,15 @@ bool GrinderTcpWriteMdnsTxt(char *service, char *proto, char *key_mac, char *key
 }
 
 void GrinderTcpAdvertise(void) {
-  if (GrinderTcp.advertised) {
-    return;
-  }
   if (!TimeReached(GrinderTcp.mdns_retry_at)) {
     return;
   }
   GrinderTcp.mdns_retry_at = millis() + GRINDER_TCP_MDNS_RETRY;
   GrinderTcpEnsureMdns();
   if (!Mdns.begun) {
+    return;
+  }
+  if (GrinderTcp.advertised) {
     return;
   }
   char service[] = "grinderplug";
@@ -505,9 +509,16 @@ void GrinderTcpAdvertise(void) {
   char key_proto[] = "proto";
   char model[] = GRINDER_TCP_MODEL;
   char proto_version[] = "1";
-  MDNS.addService(service, proto, GRINDER_TCP_PORT);
+  const bool service_added = MDNS.addService(service, proto, GRINDER_TCP_PORT);
   const bool txt_added = GrinderTcpWriteMdnsTxt(service, proto, key_mac, key_name, key_model, key_proto, model, proto_version);
-  if (txt_added) {
+  AddLog(LOG_LEVEL_INFO,
+         PSTR("GTC: mDNS service %u txt %u host %s mac %s port %u"),
+         service_added,
+         txt_added,
+         NetworkHostname(),
+         GrinderTcp.plug_mac,
+         GRINDER_TCP_PORT);
+  if (service_added && txt_added) {
     GrinderTcp.advertised = true;
   }
 }
