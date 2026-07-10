@@ -59,12 +59,13 @@ The driver forces `Power1 OFF` on:
 - Wi-Fi down
 - TCP client disconnect
 - heartbeat timeout
-- 30 second maximum ON time
 - invalid protocol input
 - `BYE`
 - `OFF`
 - duplicate `OFF`
 - unsupported relay layout
+
+There is no fixed maximum `Power1 ON` duration. `ON` means the grinder has power available; it does not prove that the motor is running. The client must send `OFF`, `!`, or `BYE` when power is no longer needed, while disconnect and heartbeat timeout remain fail-safe shutdown paths.
 
 It also blocks or immediately cancels non-TCP `Power1 ON` attempts from Web UI, HTTP API, MQTT, buttons, rules, timers, device groups, or retained state. External `OFF` clears TCP ownership.
 

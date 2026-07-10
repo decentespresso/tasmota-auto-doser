@@ -10,7 +10,6 @@ static const char *kPlugMac = "A4:C1:38:12:34:56";
 static const uint32_t kHeartbeatTimeoutMs = 2000;
 static const uint32_t kHelloTimeoutMs = 1000;
 static const uint32_t kCloseGraceMs = 250;
-static const uint32_t kMaxOnMs = 30000;
 
 static std::string FormatOk(const bool relay_on) {
   char output[64];
@@ -34,7 +33,6 @@ struct GrinderTcpDriverSim {
   uint32_t now = 0;
   uint32_t last_rx = 0;
   uint32_t close_at = 0;
-  uint32_t on_since = 0;
   bool connected = false;
   bool greeted = false;
   bool relay_on = false;
@@ -100,7 +98,6 @@ struct GrinderTcpDriverSim {
     NeutralizePowerControls();
     relay_on = false;
     authorized_on = false;
-    on_since = 0;
     direct_off_count++;
   }
 
@@ -202,7 +199,6 @@ struct GrinderTcpDriverSim {
       return;
     }
     EnforceOwnership();
-    EnforceMaxOn();
     KeepAwakeWhileGrinding();
     if (server_open && !relay_on) {
       Advertise();
@@ -264,7 +260,6 @@ struct GrinderTcpDriverSim {
         RelayOff();
         return Reply(FormatOk(relay_on));
       case GRINDER_TCP_ACTION_ON: {
-        const bool was_on = relay_on;
         NeutralizePowerControls();
         authorized_on = connected && greeted && !close_pending;
         tcp_power_command = true;
@@ -272,9 +267,6 @@ struct GrinderTcpDriverSim {
         tcp_power_command = false;
         if (!relay_on) {
           authorized_on = false;
-          on_since = 0;
-        } else if (!was_on || !on_since) {
-          on_since = now;
         }
         EnforceOwnership();
         return Reply(FormatOk(relay_on));
@@ -323,18 +315,6 @@ struct GrinderTcpDriverSim {
     now += elapsed;
   }
 
-  void EnforceMaxOn(void) {
-    if (!relay_on) {
-      on_since = 0;
-      return;
-    }
-    if (RelayOwned() && ((now - on_since) >= kMaxOnMs)) {
-      RelayOff();
-      close_pending = true;
-      close_at = now + kCloseGraceMs;
-    }
-  }
-
   void Tick(void) {
     if (connected && close_pending && ((now - close_at) < 0x80000000UL)) {
       DisconnectActive();
@@ -348,7 +328,6 @@ struct GrinderTcpDriverSim {
       DisconnectActive();
       return;
     }
-    EnforceMaxOn();
   }
 };
 
@@ -484,21 +463,21 @@ static void TestHelloTimeoutTurnsOff(void) {
   assert(!sim.relay_on);
 }
 
-static void TestMaxOnCutsOffDespiteHeartbeats(void) {
+static void TestOnRemainsUntilOff(void) {
   GrinderTcpDriverSim sim;
   assert(sim.Start());
   assert("" == sim.Connect());
   assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
   assert(FormatOk(true) == sim.Send("ON"));
-  for (uint32_t elapsed = 500; elapsed <= kMaxOnMs; elapsed += 500) {
+  for (uint32_t elapsed = 500; elapsed <= 60000; elapsed += 500) {
     sim.Advance(500);
     assert(FormatOk(true) == sim.Send("PING"));
     sim.Tick();
   }
   assert(sim.connected);
-  assert(sim.close_pending);
-  assert(!sim.relay_on);
-  assert(!sim.authorized_on);
+  assert(sim.relay_on);
+  assert(sim.authorized_on);
+  assert(FormatOk(false) == sim.Send("OFF"));
 }
 
 static void TestDuplicateOffIsIdempotent(void) {
@@ -733,7 +712,7 @@ int main(void) {
   TestDisconnectTurnsOff();
   TestHeartbeatTimeoutTurnsOff();
   TestHelloTimeoutTurnsOff();
-  TestMaxOnCutsOffDespiteHeartbeats();
+  TestOnRemainsUntilOff();
   TestDuplicateOffIsIdempotent();
   TestFastOffBeforeGenericSync();
   TestEmergencyOffAlias();

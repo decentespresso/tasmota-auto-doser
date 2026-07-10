@@ -38,10 +38,6 @@
 #define GRINDER_TCP_CLOSE_GRACE 250
 #endif
 
-#ifndef GRINDER_TCP_MAX_ON_MS
-#define GRINDER_TCP_MAX_ON_MS 30000
-#endif
-
 #ifndef GRINDER_TCP_ACCEPT_LIMIT
 #define GRINDER_TCP_ACCEPT_LIMIT 4
 #endif
@@ -76,7 +72,6 @@ struct {
   GrinderTcpLineReader reader;
   uint32_t last_rx = 0;
   uint32_t close_at = 0;
-  uint32_t on_since = 0;
   uint32_t mdns_retry_at = 0;
   char plug_mac[18] = { 0 };
   bool server_open = false;
@@ -181,7 +176,6 @@ bool GrinderTcpRelayHardwareSupported(void) {
 
 void GrinderTcpRelayOffDirect(void) {
   GrinderTcp.authorized_on = false;
-  GrinderTcp.on_since = 0;
   GrinderTcpNeutralizePowerControls();
   TasmotaGlobal.power &= (POWER_MASK ^ 1);
   TasmotaGlobal.last_power &= (POWER_MASK ^ 1);
@@ -206,7 +200,6 @@ void GrinderTcpRelayOnCommand(void) {
     GrinderTcpRelayOff();
     return;
   }
-  const bool was_on = GrinderTcpRelayStateOn();
   GrinderTcpNeutralizePowerControls();
   GrinderTcp.authorized_on = true;
   GrinderTcp.tcp_power_command = true;
@@ -214,11 +207,6 @@ void GrinderTcpRelayOnCommand(void) {
   GrinderTcp.tcp_power_command = false;
   if (!GrinderTcpRelayStateOn()) {
     GrinderTcp.authorized_on = false;
-    GrinderTcp.on_since = 0;
-    return;
-  }
-  if (!was_on || !GrinderTcp.on_since) {
-    GrinderTcp.on_since = millis();
   }
 }
 
@@ -444,17 +432,6 @@ void GrinderTcpCheckTimeout(void) {
   }
 }
 
-void GrinderTcpCheckMaxOn(void) {
-  if (!GrinderTcpRelayStateOn()) {
-    GrinderTcp.on_since = 0;
-    return;
-  }
-  if (GrinderTcpRelayOwned() && TimeReached(GrinderTcp.on_since + GRINDER_TCP_MAX_ON_MS)) {
-    GrinderTcpRelayOff();
-    GrinderTcpScheduleActiveClose(false);
-  }
-}
-
 void GrinderTcpEnforceRelayOwnership(void) {
   if (GrinderTcpRelayStateOn()) {
     if (!GrinderTcpRelayOwned()) {
@@ -481,7 +458,6 @@ void GrinderTcpLoop(void) {
   GrinderTcpReadClient();
   GrinderTcpCheckTimeout();
   GrinderTcpEnforceRelayOwnership();
-  GrinderTcpCheckMaxOn();
   GrinderTcpKeepAwakeWhileGrinding();
   GrinderTcpPollServer();
   if (GrinderTcp.server_open && !GrinderTcpRelayStateOn()) {
