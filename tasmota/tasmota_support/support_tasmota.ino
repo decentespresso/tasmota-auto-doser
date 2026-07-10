@@ -251,6 +251,7 @@ void SetLatchingRelay(power_t lpower, uint32_t state) {
 }
 
 #ifdef USE_GRINDER_TCP
+#define GRINDER_TCP_EARLY_POWER_GUARD_INSTALLED
 bool GrinderTcpSetDevicePowerGuard(power_t rpower, uint32_t source);
 #endif
 

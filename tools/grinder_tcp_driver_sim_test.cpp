@@ -10,6 +10,7 @@ static const char *kPlugMac = "A4:C1:38:12:34:56";
 static const uint32_t kHeartbeatTimeoutMs = 2000;
 static const uint32_t kHelloTimeoutMs = 1000;
 static const uint32_t kCloseGraceMs = 250;
+static const uint32_t kTxTimeoutMs = 250;
 
 static std::string FormatOk(const bool relay_on) {
   char output[64];
@@ -78,6 +79,9 @@ struct GrinderTcpDriverSim {
   bool fake_power_driver_enabled = false;
   bool tcp_power_command = false;
   bool response_write_succeeds = true;
+  bool response_write_blocked = false;
+  bool response_pending = false;
+  uint32_t response_deadline = 0;
 
   bool RelayOwned(void) const {
     return connected && greeted && authorized_on && !close_pending;
@@ -240,7 +244,7 @@ struct GrinderTcpDriverSim {
   }
 
   std::string Send(const char *line) {
-    if (!connected || close_pending) {
+    if (!connected || close_pending || response_pending) {
       return "";
     }
     const GrinderTcpParseResult result = GrinderTcpParseLine(line, greeted);
@@ -295,6 +299,8 @@ struct GrinderTcpDriverSim {
     connected = false;
     greeted = false;
     close_pending = false;
+    response_pending = false;
+    response_deadline = 0;
   }
 
   void Restart(void) {
@@ -304,6 +310,11 @@ struct GrinderTcpDriverSim {
   }
 
   std::string Reply(const std::string &response) {
+    if (response_write_blocked) {
+      response_pending = true;
+      response_deadline = now + kTxTimeoutMs;
+      return "";
+    }
     if (response_write_succeeds) {
       return response;
     }
@@ -316,6 +327,10 @@ struct GrinderTcpDriverSim {
   }
 
   void Tick(void) {
+    if (response_pending && ((now - response_deadline) < 0x80000000UL)) {
+      DisconnectActive();
+      return;
+    }
     if (connected && close_pending && ((now - close_at) < 0x80000000UL)) {
       DisconnectActive();
       return;
@@ -653,6 +668,25 @@ static void TestOnResponseWriteFailureTurnsOff(void) {
   assert(!sim.authorized_on);
 }
 
+static void TestBlockedOnResponseTurnsOffAtTxDeadline(void) {
+  GrinderTcpDriverSim sim;
+  assert(sim.Start());
+  assert("" == sim.Connect());
+  assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
+  sim.response_write_blocked = true;
+  assert("" == sim.Send("ON"));
+  assert(sim.relay_on);
+  assert(sim.response_pending);
+  sim.Advance(kTxTimeoutMs - 1);
+  sim.Tick();
+  assert(sim.relay_on);
+  sim.Advance(1);
+  sim.Tick();
+  assert(!sim.connected);
+  assert(!sim.relay_on);
+  assert(!sim.authorized_on);
+}
+
 static void TestRestartDuringOnTurnsOff(void) {
   GrinderTcpDriverSim sim;
   assert(sim.Start());
@@ -725,6 +759,7 @@ int main(void) {
   TestUnsupportedRelayLayoutRefusesStart();
   TestPowerControlsClearedBeforeOn();
   TestOnResponseWriteFailureTurnsOff();
+  TestBlockedOnResponseTurnsOffAtTxDeadline();
   TestRestartDuringOnTurnsOff();
   TestQuietDefaultsDisableNoisyServices();
   TestQuietDefaultsAreNotRewrittenInLoop();

@@ -4,15 +4,23 @@
 #error USE_GRINDER_TCP requires USE_DISCOVERY
 #endif
 
+#ifndef GRINDER_TCP_EARLY_POWER_GUARD_INSTALLED
+#error USE_GRINDER_TCP requires the early SetDevicePower guard
+#endif
+
+#ifndef ESP32
+#error USE_GRINDER_TCP requires ESP32
+#endif
+
 #ifdef XDRV_95
 #error XDRV_95 already defined
 #endif
 
 #define XDRV_95 95
 
-#ifdef ESP32
+#include <errno.h>
+#include <sys/socket.h>
 #include "esp_mac.h"
-#endif
 
 #include "tasmota_xdrv_driver/xdrv_95_grinder_tcp_protocol.h"
 
@@ -38,6 +46,10 @@
 #define GRINDER_TCP_CLOSE_GRACE 250
 #endif
 
+#ifndef GRINDER_TCP_TX_TIMEOUT
+#define GRINDER_TCP_TX_TIMEOUT 250
+#endif
+
 #ifndef GRINDER_TCP_ACCEPT_LIMIT
 #define GRINDER_TCP_ACCEPT_LIMIT 4
 #endif
@@ -58,8 +70,28 @@
 #define GRINDER_TCP_MODEL "NOUS_A6T"
 #endif
 
+struct GrinderTcpPendingTx {
+  char data[66] = { 0 };
+  uint32_t length = 0;
+  uint32_t sent = 0;
+  uint32_t deadline = 0;
+  bool close_after = false;
+};
+
+enum GrinderTcpTxResult {
+  GRINDER_TCP_TX_PENDING,
+  GRINDER_TCP_TX_COMPLETE,
+  GRINDER_TCP_TX_FAILED
+};
+
+void GrinderTcpResetTx(GrinderTcpPendingTx &tx);
+bool GrinderTcpQueueTx(GrinderTcpPendingTx &tx, const char *line, const bool close_after);
+GrinderTcpTxResult GrinderTcpFlushTx(WiFiClient &client, GrinderTcpPendingTx &tx);
+bool GrinderTcpQueueBusy(GrinderTcpPendingTx &tx);
+
 struct GrinderTcpClosingClient {
   WiFiClient client;
+  GrinderTcpPendingTx tx;
   uint32_t close_at = 0;
   bool open = false;
 };
@@ -70,6 +102,7 @@ struct {
   WiFiClient client;
   GrinderTcpClosingClient closing[GRINDER_TCP_BUSY_CLOSE_SLOTS];
   GrinderTcpLineReader reader;
+  GrinderTcpPendingTx tx;
   uint32_t last_rx = 0;
   uint32_t close_at = 0;
   uint32_t mdns_retry_at = 0;
@@ -210,27 +243,62 @@ void GrinderTcpRelayOnCommand(void) {
   }
 }
 
-bool GrinderTcpWriteLine(WiFiClient &client, const char *line) {
-  const size_t length = strlen(line);
-  return (length == client.write((const uint8_t*)line, length)) && (1 == client.write((uint8_t)'\n'));
+void GrinderTcpResetTx(GrinderTcpPendingTx &tx) {
+  tx.length = 0;
+  tx.sent = 0;
+  tx.deadline = 0;
+  tx.close_after = false;
 }
 
-bool GrinderTcpWriteOk(WiFiClient &client) {
+bool GrinderTcpQueueTx(GrinderTcpPendingTx &tx, const char *line, const bool close_after) {
+  const size_t length = strlen(line);
+  if (tx.length || ((length + 1) > sizeof(tx.data))) {
+    return false;
+  }
+  memcpy(tx.data, line, length);
+  tx.data[length] = '\n';
+  tx.length = length + 1;
+  tx.sent = 0;
+  tx.deadline = millis() + GRINDER_TCP_TX_TIMEOUT;
+  tx.close_after = close_after;
+  return true;
+}
+
+GrinderTcpTxResult GrinderTcpFlushTx(WiFiClient &client, GrinderTcpPendingTx &tx) {
+  if (!client.connected() || TimeReached(tx.deadline)) {
+    return GRINDER_TCP_TX_FAILED;
+  }
+  const int socket = client.fd();
+  if (socket < 0) {
+    return GRINDER_TCP_TX_FAILED;
+  }
+  const ssize_t written = send(socket, tx.data + tx.sent, tx.length - tx.sent, MSG_DONTWAIT);
+  if (written > 0) {
+    tx.sent += written;
+    return (tx.sent == tx.length) ? GRINDER_TCP_TX_COMPLETE : GRINDER_TCP_TX_PENDING;
+  }
+  if ((written < 0) && ((EAGAIN == errno) || (EWOULDBLOCK == errno) || (EINTR == errno))) {
+    return GRINDER_TCP_TX_PENDING;
+  }
+  return GRINDER_TCP_TX_FAILED;
+}
+
+bool GrinderTcpQueueOk(const bool close_after = false) {
   char response[48];
   GrinderTcpFormatOk(response, sizeof(response), GrinderTcp.plug_mac, GrinderTcpRelayStateOn());
-  return GrinderTcpWriteLine(client, response);
+  return GrinderTcpQueueTx(GrinderTcp.tx, response, close_after);
 }
 
-bool GrinderTcpWriteBusy(WiFiClient &client) {
+bool GrinderTcpQueueBusy(GrinderTcpPendingTx &tx) {
   char response[32];
   GrinderTcpFormatBusy(response, sizeof(response), GrinderTcp.plug_mac);
-  return GrinderTcpWriteLine(client, response);
+  return GrinderTcpQueueTx(tx, response, true);
 }
 
-bool GrinderTcpWriteErr(WiFiClient &client, const uint32_t reason) {
+bool GrinderTcpQueueErr(const uint32_t reason) {
   char response[64];
   GrinderTcpFormatErr(response, sizeof(response), GrinderTcp.plug_mac, (GrinderTcpReason)reason);
-  return GrinderTcpWriteLine(client, response);
+  return GrinderTcpQueueTx(GrinderTcp.tx, response, true);
 }
 
 void GrinderTcpResetActiveClient(void) {
@@ -242,6 +310,7 @@ void GrinderTcpResetActiveClient(void) {
   GrinderTcp.last_rx = 0;
   GrinderTcp.close_at = 0;
   GrinderTcpLineReset(&GrinderTcp.reader);
+  GrinderTcpResetTx(GrinderTcp.tx);
 }
 
 void GrinderTcpCloseActiveNow(const bool relay_off) {
@@ -272,11 +341,26 @@ void GrinderTcpFinishActiveClose(void) {
   }
 }
 
-void GrinderTcpWriteActiveErrAndClose(const uint32_t reason) {
-  GrinderTcpRelayOff();
-  if (GrinderTcpWriteErr(GrinderTcp.client, reason)) {
+void GrinderTcpFlushActiveTx(void) {
+  if (!GrinderTcp.client_open || !GrinderTcp.tx.length) {
+    return;
+  }
+  const bool close_after = GrinderTcp.tx.close_after;
+  const GrinderTcpTxResult result = GrinderTcpFlushTx(GrinderTcp.client, GrinderTcp.tx);
+  if (GRINDER_TCP_TX_PENDING == result) {
+    return;
+  }
+  GrinderTcpResetTx(GrinderTcp.tx);
+  if (GRINDER_TCP_TX_FAILED == result) {
+    GrinderTcpCloseActiveNow(true);
+  } else if (close_after) {
     GrinderTcpScheduleActiveClose(false);
-  } else {
+  }
+}
+
+void GrinderTcpQueueActiveErrAndClose(const uint32_t reason) {
+  GrinderTcpRelayOff();
+  if (!GrinderTcpQueueErr(reason)) {
     GrinderTcpCloseActiveNow(false);
   }
 }
@@ -286,8 +370,13 @@ void GrinderTcpScheduleClosingClient(WiFiClient &client) {
     if (!GrinderTcp.closing[i].open) {
       GrinderTcp.closing[i].client = client;
       GrinderTcp.closing[i].client.setNoDelay(true);
-      GrinderTcp.closing[i].close_at = millis() + GRINDER_TCP_CLOSE_GRACE;
       GrinderTcp.closing[i].open = true;
+      GrinderTcp.closing[i].close_at = 0;
+      GrinderTcpResetTx(GrinderTcp.closing[i].tx);
+      if (!GrinderTcpQueueBusy(GrinderTcp.closing[i].tx)) {
+        GrinderTcp.closing[i].client.stop();
+        GrinderTcp.closing[i].open = false;
+      }
       return;
     }
   }
@@ -296,7 +385,30 @@ void GrinderTcpScheduleClosingClient(WiFiClient &client) {
 
 void GrinderTcpFinishClosingClients(void) {
   for (uint32_t i = 0; i < GRINDER_TCP_BUSY_CLOSE_SLOTS; i++) {
-    if (GrinderTcp.closing[i].open && (!GrinderTcp.closing[i].client.connected() || TimeReached(GrinderTcp.closing[i].close_at))) {
+    if (!GrinderTcp.closing[i].open) {
+      continue;
+    }
+    if (!GrinderTcp.closing[i].client.connected()) {
+      GrinderTcp.closing[i].client.stop();
+      GrinderTcp.closing[i].open = false;
+      GrinderTcp.closing[i].close_at = 0;
+      GrinderTcpResetTx(GrinderTcp.closing[i].tx);
+      continue;
+    }
+    if (GrinderTcp.closing[i].tx.length) {
+      const GrinderTcpTxResult result = GrinderTcpFlushTx(GrinderTcp.closing[i].client, GrinderTcp.closing[i].tx);
+      if (GRINDER_TCP_TX_PENDING == result) {
+        continue;
+      }
+      GrinderTcpResetTx(GrinderTcp.closing[i].tx);
+      if (GRINDER_TCP_TX_FAILED == result) {
+        GrinderTcp.closing[i].client.stop();
+        GrinderTcp.closing[i].open = false;
+        continue;
+      }
+      GrinderTcp.closing[i].close_at = millis() + GRINDER_TCP_CLOSE_GRACE;
+    }
+    if (TimeReached(GrinderTcp.closing[i].close_at)) {
       GrinderTcp.closing[i].client.stop();
       GrinderTcp.closing[i].open = false;
       GrinderTcp.closing[i].close_at = 0;
@@ -314,14 +426,10 @@ void GrinderTcpAccept(WiFiClient &client) {
   GrinderTcp.last_rx = millis();
   GrinderTcp.close_at = 0;
   GrinderTcpLineReset(&GrinderTcp.reader);
+  GrinderTcpResetTx(GrinderTcp.tx);
 }
 
 void GrinderTcpRejectBusy(WiFiClient &client) {
-  client.setNoDelay(true);
-  if (!GrinderTcpWriteBusy(client)) {
-    client.stop();
-    return;
-  }
   GrinderTcpScheduleClosingClient(client);
 }
 
@@ -329,7 +437,7 @@ void GrinderTcpProcessLine(const char *line) {
   const GrinderTcpParseResult result = GrinderTcpParseLine(line, GrinderTcp.greeted);
   GrinderTcp.last_rx = millis();
   if (GRINDER_TCP_REASON_NONE != result.reason) {
-    GrinderTcpWriteActiveErrAndClose(result.reason);
+    GrinderTcpQueueActiveErrAndClose(result.reason);
     return;
   }
   bool close_after_response = false;
@@ -353,36 +461,32 @@ void GrinderTcpProcessLine(const char *line) {
       close_after_response = true;
       break;
     default:
-      GrinderTcpWriteActiveErrAndClose(GRINDER_TCP_REASON_UNKNOWN_COMMAND);
+      GrinderTcpQueueActiveErrAndClose(GRINDER_TCP_REASON_UNKNOWN_COMMAND);
       return;
   }
-  if (!GrinderTcpWriteOk(GrinderTcp.client)) {
+  if (!GrinderTcpQueueOk(close_after_response)) {
     GrinderTcpCloseActiveNow(true);
-    return;
-  }
-  if (close_after_response) {
-    GrinderTcpScheduleActiveClose(false);
   }
 }
 
 void GrinderTcpProcessEmergencyOff(void) {
   GrinderTcp.last_rx = millis();
   if (!GrinderTcp.greeted) {
-    GrinderTcpWriteActiveErrAndClose(GRINDER_TCP_REASON_BEFORE_HELLO);
+    GrinderTcpQueueActiveErrAndClose(GRINDER_TCP_REASON_BEFORE_HELLO);
     return;
   }
   GrinderTcpRelayOff();
-  if (!GrinderTcpWriteOk(GrinderTcp.client)) {
+  if (!GrinderTcpQueueOk()) {
     GrinderTcpCloseActiveNow(false);
   }
 }
 
 void GrinderTcpReadClient(void) {
-  if (!GrinderTcp.client_open || GrinderTcp.close_pending) {
+  if (!GrinderTcp.client_open || GrinderTcp.close_pending || GrinderTcp.tx.length) {
     return;
   }
   uint32_t processed = 0;
-  while (GrinderTcp.client_open && !GrinderTcp.close_pending && GrinderTcp.client.available() && (processed < GRINDER_TCP_MAX_BYTES_PER_LOOP)) {
+  while (GrinderTcp.client_open && !GrinderTcp.close_pending && !GrinderTcp.tx.length && GrinderTcp.client.available() && (processed < GRINDER_TCP_MAX_BYTES_PER_LOOP)) {
     const int value = GrinderTcp.client.read();
     processed++;
     const GrinderTcpReadResult result = GrinderTcpLineRead(&GrinderTcp.reader, (uint8_t)value);
@@ -392,9 +496,9 @@ void GrinderTcpReadClient(void) {
     } else if (GRINDER_TCP_READ_EMERGENCY_OFF == result) {
       GrinderTcpProcessEmergencyOff();
     } else if (GRINDER_TCP_READ_OVERFLOW == result) {
-      GrinderTcpWriteActiveErrAndClose(GRINDER_TCP_REASON_LINE_OVERFLOW);
+      GrinderTcpQueueActiveErrAndClose(GRINDER_TCP_REASON_LINE_OVERFLOW);
     } else if (GRINDER_TCP_READ_INVALID == result) {
-      GrinderTcpWriteActiveErrAndClose(GRINDER_TCP_REASON_INVALID_CHAR);
+      GrinderTcpQueueActiveErrAndClose(GRINDER_TCP_REASON_INVALID_CHAR);
     }
   }
 }
@@ -451,11 +555,13 @@ void GrinderTcpKeepAwakeWhileGrinding(void) {
 void GrinderTcpLoop(void) {
   GrinderTcpFinishActiveClose();
   GrinderTcpFinishClosingClients();
+  GrinderTcpFlushActiveTx();
   if (GrinderTcp.server_open && !GrinderTcpRelayHardwareSupported()) {
     GrinderTcpStop();
     return;
   }
   GrinderTcpReadClient();
+  GrinderTcpFlushActiveTx();
   GrinderTcpCheckTimeout();
   GrinderTcpEnforceRelayOwnership();
   GrinderTcpKeepAwakeWhileGrinding();
