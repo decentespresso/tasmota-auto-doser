@@ -7,6 +7,10 @@
 #include "../tasmota/tasmota_xdrv_driver/xdrv_95_grinder_tcp_protocol.h"
 
 static const char *kPlugMac = "A4:C1:38:12:34:56";
+static const uint32_t kHeartbeatTimeoutMs = 2000;
+static const uint32_t kHelloTimeoutMs = 1000;
+static const uint32_t kCloseGraceMs = 250;
+static const uint32_t kMaxOnMs = 30000;
 
 static std::string FormatOk(const bool relay_on) {
   char output[64];
@@ -30,6 +34,7 @@ struct GrinderTcpDriverSim {
   uint32_t now = 0;
   uint32_t last_rx = 0;
   uint32_t close_at = 0;
+  uint32_t on_since = 0;
   bool connected = false;
   bool greeted = false;
   bool relay_on = false;
@@ -90,6 +95,7 @@ struct GrinderTcpDriverSim {
     NeutralizePowerDelay();
     relay_on = false;
     authorized_on = false;
+    on_since = 0;
     direct_off_count++;
   }
 
@@ -146,14 +152,7 @@ struct GrinderTcpDriverSim {
   }
 
   void ApplyQuietSettings(void) {
-    if (mqtt_enabled) {
-      mqtt_disconnect_count++;
-    }
-    if (emulation_enabled) {
-      udp_disconnect_count++;
-    }
     mqtt_enabled = false;
-    mqtt_connected = false;
     mqtt_retained = false;
     hass_discovery = false;
     emulation_enabled = false;
@@ -192,13 +191,13 @@ struct GrinderTcpDriverSim {
   }
 
   void Loop(void) {
-    ApplyQuietSettings();
     if (server_open && !RelayHardwareSupported()) {
       RelayOff();
       server_open = false;
       return;
     }
     EnforceOwnership();
+    EnforceMaxOn();
     KeepAwakeWhileGrinding();
     if (server_open && !relay_on) {
       Advertise();
@@ -224,7 +223,7 @@ struct GrinderTcpDriverSim {
   void ScheduleClose(void) {
     RelayOff();
     close_pending = true;
-    close_at = now + 50;
+    close_at = now + kCloseGraceMs;
   }
 
   bool Start(void) {
@@ -259,7 +258,8 @@ struct GrinderTcpDriverSim {
       case GRINDER_TCP_ACTION_OFF:
         RelayOff();
         return FormatOk(relay_on);
-      case GRINDER_TCP_ACTION_ON:
+      case GRINDER_TCP_ACTION_ON: {
+        const bool was_on = relay_on;
         NeutralizePowerDelay();
         authorized_on = connected && greeted && !close_pending;
         tcp_power_command = true;
@@ -267,9 +267,13 @@ struct GrinderTcpDriverSim {
         tcp_power_command = false;
         if (!relay_on) {
           authorized_on = false;
+          on_since = 0;
+        } else if (!was_on || !on_since) {
+          on_since = now;
         }
         EnforceOwnership();
         return FormatOk(relay_on);
+      }
       case GRINDER_TCP_ACTION_STATE:
         return FormatOk(relay_on);
       case GRINDER_TCP_ACTION_BYE:
@@ -300,6 +304,18 @@ struct GrinderTcpDriverSim {
     now += elapsed;
   }
 
+  void EnforceMaxOn(void) {
+    if (!relay_on) {
+      on_since = 0;
+      return;
+    }
+    if (RelayOwned() && ((now - on_since) >= kMaxOnMs)) {
+      RelayOff();
+      close_pending = true;
+      close_at = now + kCloseGraceMs;
+    }
+  }
+
   void Tick(void) {
     if (connected && close_pending && ((now - close_at) < 0x80000000UL)) {
       DisconnectActive();
@@ -308,10 +324,12 @@ struct GrinderTcpDriverSim {
     if (!connected || close_pending) {
       return;
     }
-    const uint32_t timeout = greeted ? 1500 : 1000;
+    const uint32_t timeout = greeted ? kHeartbeatTimeoutMs : kHelloTimeoutMs;
     if ((now - last_rx) >= timeout) {
       DisconnectActive();
+      return;
     }
+    EnforceMaxOn();
   }
 };
 
@@ -409,7 +427,7 @@ static void TestDeferredByeClose(void) {
   assert(FormatOk(false) == sim.Send("BYE"));
   assert(sim.connected);
   assert(sim.close_pending);
-  sim.Advance(50);
+  sim.Advance(kCloseGraceMs);
   sim.Tick();
   assert(!sim.connected);
 }
@@ -431,7 +449,7 @@ static void TestHeartbeatTimeoutTurnsOff(void) {
   assert("" == sim.Connect());
   assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
   assert(FormatOk(true) == sim.Send("ON"));
-  sim.Advance(1500);
+  sim.Advance(kHeartbeatTimeoutMs);
   sim.Tick();
   assert(!sim.connected);
   assert(!sim.relay_on);
@@ -441,10 +459,27 @@ static void TestHelloTimeoutTurnsOff(void) {
   GrinderTcpDriverSim sim;
   assert(sim.Start());
   assert("" == sim.Connect());
-  sim.Advance(1000);
+  sim.Advance(kHelloTimeoutMs);
   sim.Tick();
   assert(!sim.connected);
   assert(!sim.relay_on);
+}
+
+static void TestMaxOnCutsOffDespiteHeartbeats(void) {
+  GrinderTcpDriverSim sim;
+  assert(sim.Start());
+  assert("" == sim.Connect());
+  assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
+  assert(FormatOk(true) == sim.Send("ON"));
+  for (uint32_t elapsed = 500; elapsed <= kMaxOnMs; elapsed += 500) {
+    sim.Advance(500);
+    assert(FormatOk(true) == sim.Send("PING"));
+    sim.Tick();
+  }
+  assert(sim.connected);
+  assert(sim.close_pending);
+  assert(!sim.relay_on);
+  assert(!sim.authorized_on);
 }
 
 static void TestDuplicateOffIsIdempotent(void) {
@@ -604,7 +639,7 @@ static void TestQuietDefaultsDisableNoisyServices(void) {
   GrinderTcpDriverSim sim;
   sim.ApplyQuietSettings();
   assert(!sim.mqtt_enabled);
-  assert(!sim.mqtt_connected);
+  assert(sim.mqtt_connected);
   assert(!sim.mqtt_retained);
   assert(!sim.hass_discovery);
   assert(!sim.emulation_enabled);
@@ -616,22 +651,21 @@ static void TestQuietDefaultsDisableNoisyServices(void) {
   assert(!sim.wizmote_enabled);
   assert(!sim.berry_autoexec_enabled);
   assert(sim.mdns_enabled);
-  assert(1 == sim.mqtt_disconnect_count);
-  assert(1 == sim.udp_disconnect_count);
+  assert(0 == sim.mqtt_disconnect_count);
+  assert(0 == sim.udp_disconnect_count);
 }
 
-static void TestQuietDefaultsAreEnforcedInLoop(void) {
+static void TestQuietDefaultsAreNotRewrittenInLoop(void) {
   GrinderTcpDriverSim sim;
   sim.mqtt_enabled = true;
   sim.emulation_enabled = true;
   sim.timers_enabled = true;
   sim.rules_enabled = true;
   sim.Loop();
-  assert(!sim.mqtt_enabled);
-  assert(!sim.emulation_enabled);
-  assert(!sim.timers_enabled);
-  assert(!sim.rules_enabled);
-  assert(sim.mdns_enabled);
+  assert(sim.mqtt_enabled);
+  assert(sim.emulation_enabled);
+  assert(sim.timers_enabled);
+  assert(sim.rules_enabled);
 }
 
 int main(void) {
@@ -647,6 +681,7 @@ int main(void) {
   TestDisconnectTurnsOff();
   TestHeartbeatTimeoutTurnsOff();
   TestHelloTimeoutTurnsOff();
+  TestMaxOnCutsOffDespiteHeartbeats();
   TestDuplicateOffIsIdempotent();
   TestFastOffBeforeGenericSync();
   TestEmergencyOffAlias();
@@ -659,7 +694,7 @@ int main(void) {
   TestUnsupportedRelayLayoutRefusesStart();
   TestPowerDelayClearedBeforeOn();
   TestQuietDefaultsDisableNoisyServices();
-  TestQuietDefaultsAreEnforcedInLoop();
+  TestQuietDefaultsAreNotRewrittenInLoop();
   puts("grinder_tcp_driver_sim_test passed");
   return 0;
 }

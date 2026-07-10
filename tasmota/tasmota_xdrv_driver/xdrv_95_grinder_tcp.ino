@@ -21,7 +21,13 @@
 #endif
 
 #ifndef GRINDER_TCP_HEARTBEAT_TIMEOUT
-#define GRINDER_TCP_HEARTBEAT_TIMEOUT 1500
+#ifndef GRINDER_TCP_HEARTBEAT_INTERVAL
+#define GRINDER_TCP_HEARTBEAT_INTERVAL 500
+#endif
+#ifndef GRINDER_TCP_HEARTBEAT_MISSES
+#define GRINDER_TCP_HEARTBEAT_MISSES 4
+#endif
+#define GRINDER_TCP_HEARTBEAT_TIMEOUT (GRINDER_TCP_HEARTBEAT_INTERVAL * GRINDER_TCP_HEARTBEAT_MISSES)
 #endif
 
 #ifndef GRINDER_TCP_HELLO_TIMEOUT
@@ -29,7 +35,11 @@
 #endif
 
 #ifndef GRINDER_TCP_CLOSE_GRACE
-#define GRINDER_TCP_CLOSE_GRACE 50
+#define GRINDER_TCP_CLOSE_GRACE 250
+#endif
+
+#ifndef GRINDER_TCP_MAX_ON_MS
+#define GRINDER_TCP_MAX_ON_MS 30000
 #endif
 
 #ifndef GRINDER_TCP_ACCEPT_LIMIT
@@ -66,6 +76,7 @@ struct {
   GrinderTcpLineReader reader;
   uint32_t last_rx = 0;
   uint32_t close_at = 0;
+  uint32_t on_since = 0;
   uint32_t mdns_retry_at = 0;
   char plug_mac[18] = { 0 };
   bool server_open = false;
@@ -81,10 +92,6 @@ void GrinderTcpAdvertise(void);
 void GrinderTcpStop(void);
 
 void GrinderTcpApplyQuietSettings(void) {
-  const bool mqtt_was_enabled = Settings->flag.mqtt_enabled;
-#ifdef USE_EMULATION
-  const bool emulation_was_enabled = Settings->flag2.emulation;
-#endif
   Settings->flag.mqtt_add_global_info = 0;
   Settings->flag.mqtt_enabled = 0;
   Settings->flag.mqtt_response = 0;
@@ -123,14 +130,6 @@ void GrinderTcpApplyQuietSettings(void) {
   Settings->flag2.emulation = EMUL_NONE;
   Settings->rule_enabled = 0;
   Settings->rule_once = 0;
-  if (mqtt_was_enabled) {
-    MqttDisconnect();
-  }
-#ifdef USE_EMULATION
-  if (emulation_was_enabled) {
-    UdpDisconnect();
-  }
-#endif
 }
 
 void GrinderTcpNeutralizePowerDelay(void) {
@@ -179,6 +178,7 @@ bool GrinderTcpRelayHardwareSupported(void) {
 
 void GrinderTcpRelayOffDirect(void) {
   GrinderTcp.authorized_on = false;
+  GrinderTcp.on_since = 0;
   GrinderTcpNeutralizePowerDelay();
   TasmotaGlobal.power &= (POWER_MASK ^ 1);
   TasmotaGlobal.last_power &= (POWER_MASK ^ 1);
@@ -203,6 +203,7 @@ void GrinderTcpRelayOnCommand(void) {
     GrinderTcpRelayOff();
     return;
   }
+  const bool was_on = GrinderTcpRelayStateOn();
   GrinderTcpNeutralizePowerDelay();
   GrinderTcp.authorized_on = true;
   GrinderTcp.tcp_power_command = true;
@@ -210,6 +211,11 @@ void GrinderTcpRelayOnCommand(void) {
   GrinderTcp.tcp_power_command = false;
   if (!GrinderTcpRelayStateOn()) {
     GrinderTcp.authorized_on = false;
+    GrinderTcp.on_since = 0;
+    return;
+  }
+  if (!was_on || !GrinderTcp.on_since) {
+    GrinderTcp.on_since = millis();
   }
 }
 
@@ -429,6 +435,17 @@ void GrinderTcpCheckTimeout(void) {
   }
 }
 
+void GrinderTcpCheckMaxOn(void) {
+  if (!GrinderTcpRelayStateOn()) {
+    GrinderTcp.on_since = 0;
+    return;
+  }
+  if (GrinderTcpRelayOwned() && TimeReached(GrinderTcp.on_since + GRINDER_TCP_MAX_ON_MS)) {
+    GrinderTcpRelayOff();
+    GrinderTcpScheduleActiveClose(false);
+  }
+}
+
 void GrinderTcpEnforceRelayOwnership(void) {
   if (GrinderTcpRelayStateOn()) {
     if (!GrinderTcpRelayOwned()) {
@@ -446,7 +463,6 @@ void GrinderTcpKeepAwakeWhileGrinding(void) {
 }
 
 void GrinderTcpLoop(void) {
-  GrinderTcpApplyQuietSettings();
   GrinderTcpFinishActiveClose();
   GrinderTcpFinishClosingClients();
   if (GrinderTcp.server_open && !GrinderTcpRelayHardwareSupported()) {
@@ -456,6 +472,7 @@ void GrinderTcpLoop(void) {
   GrinderTcpReadClient();
   GrinderTcpCheckTimeout();
   GrinderTcpEnforceRelayOwnership();
+  GrinderTcpCheckMaxOn();
   GrinderTcpKeepAwakeWhileGrinding();
   GrinderTcpPollServer();
   if (GrinderTcp.server_open && !GrinderTcpRelayStateOn()) {
@@ -489,6 +506,15 @@ bool GrinderTcpWriteMdnsTxt(char *service, char *proto, char *key_mac, char *key
          MDNS.addServiceTxt(service, proto, key_proto, proto_version);
 }
 
+void GrinderTcpRemoveMdnsService(void) {
+#ifdef ESP32
+  if (Mdns.begun) {
+    mdns_service_remove("_grinderplug", "_tcp");
+  }
+#endif
+  GrinderTcp.advertised = false;
+}
+
 void GrinderTcpAdvertise(void) {
   if (!TimeReached(GrinderTcp.mdns_retry_at)) {
     return;
@@ -501,6 +527,7 @@ void GrinderTcpAdvertise(void) {
   if (GrinderTcp.advertised) {
     return;
   }
+  GrinderTcpRemoveMdnsService();
   char service[] = "grinderplug";
   char proto[] = "tcp";
   char key_mac[] = "mac";
@@ -563,7 +590,7 @@ void GrinderTcpStop(void) {
     GrinderTcpServer.stop();
     GrinderTcp.server_open = false;
   }
-  GrinderTcp.advertised = false;
+  GrinderTcpRemoveMdnsService();
 }
 
 void GrinderTcpPreInit(void) {

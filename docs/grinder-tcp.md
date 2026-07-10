@@ -59,6 +59,7 @@ The driver forces `Power1 OFF` on:
 - Wi-Fi down
 - TCP client disconnect
 - heartbeat timeout
+- 30 second maximum ON time
 - invalid protocol input
 - `BYE`
 - `OFF`
