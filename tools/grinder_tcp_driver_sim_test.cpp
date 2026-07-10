@@ -43,6 +43,8 @@ struct GrinderTcpDriverSim {
   bool server_open = false;
   bool power_on_delay = false;
   bool power_on_delay_state = false;
+  bool power_locked = false;
+  uint16_t pulse_timer = 0;
   bool rel_bistable = false;
   bool relay0_used = true;
   bool relay1_used = false;
@@ -77,6 +79,7 @@ struct GrinderTcpDriverSim {
   uint32_t mdns_txt_add_count = 0;
   bool fake_power_driver_enabled = false;
   bool tcp_power_command = false;
+  bool response_write_succeeds = true;
 
   bool RelayOwned(void) const {
     return connected && greeted && authorized_on && !close_pending;
@@ -86,13 +89,15 @@ struct GrinderTcpDriverSim {
     return (1 == devices_present) && relay0_used && !relay1_used && !rel_bistable;
   }
 
-  void NeutralizePowerDelay(void) {
+  void NeutralizePowerControls(void) {
+    power_locked = false;
+    pulse_timer = 0;
     power_on_delay = false;
     power_on_delay_state = false;
   }
 
   void RelayOffDirect(void) {
-    NeutralizePowerDelay();
+    NeutralizePowerControls();
     relay_on = false;
     authorized_on = false;
     on_since = 0;
@@ -233,7 +238,7 @@ struct GrinderTcpDriverSim {
       return false;
     }
     ApplyQuietSettings();
-    NeutralizePowerDelay();
+    NeutralizePowerControls();
     server_open = true;
     return true;
   }
@@ -246,21 +251,21 @@ struct GrinderTcpDriverSim {
     last_rx = now;
     if (GRINDER_TCP_REASON_NONE != result.reason) {
       ScheduleClose();
-      return FormatErr(result.reason);
+      return Reply(FormatErr(result.reason));
     }
     switch (result.action) {
       case GRINDER_TCP_ACTION_HELLO:
         greeted = true;
         authorized_on = false;
-        return FormatOk(relay_on);
+        return Reply(FormatOk(relay_on));
       case GRINDER_TCP_ACTION_PING:
-        return FormatOk(relay_on);
+        return Reply(FormatOk(relay_on));
       case GRINDER_TCP_ACTION_OFF:
         RelayOff();
-        return FormatOk(relay_on);
+        return Reply(FormatOk(relay_on));
       case GRINDER_TCP_ACTION_ON: {
         const bool was_on = relay_on;
-        NeutralizePowerDelay();
+        NeutralizePowerControls();
         authorized_on = connected && greeted && !close_pending;
         tcp_power_command = true;
         SetDevicePower(authorized_on);
@@ -272,16 +277,16 @@ struct GrinderTcpDriverSim {
           on_since = now;
         }
         EnforceOwnership();
-        return FormatOk(relay_on);
+        return Reply(FormatOk(relay_on));
       }
       case GRINDER_TCP_ACTION_STATE:
-        return FormatOk(relay_on);
+        return Reply(FormatOk(relay_on));
       case GRINDER_TCP_ACTION_BYE:
         ScheduleClose();
-        return FormatOk(relay_on);
+        return Reply(FormatOk(relay_on));
       default:
         ScheduleClose();
-        return FormatErr(GRINDER_TCP_REASON_UNKNOWN_COMMAND);
+        return Reply(FormatErr(GRINDER_TCP_REASON_UNKNOWN_COMMAND));
     }
   }
 
@@ -298,6 +303,20 @@ struct GrinderTcpDriverSim {
     connected = false;
     greeted = false;
     close_pending = false;
+  }
+
+  void Restart(void) {
+    DisconnectActive();
+    server_open = false;
+    Start();
+  }
+
+  std::string Reply(const std::string &response) {
+    if (response_write_succeeds) {
+      return response;
+    }
+    DisconnectActive();
+    return "";
   }
 
   void Advance(const uint32_t elapsed) {
@@ -618,21 +637,54 @@ static void TestUnsupportedRelayLayoutRefusesStart(void) {
   assert(!bistable_relay.relay_on);
 }
 
-static void TestPowerDelayClearedBeforeOn(void) {
+static void TestPowerControlsClearedBeforeOn(void) {
   GrinderTcpDriverSim sim;
   sim.power_on_delay = true;
   sim.power_on_delay_state = true;
+  sim.power_locked = true;
+  sim.pulse_timer = 40;
   assert(sim.Start());
   assert(!sim.power_on_delay);
   assert(!sim.power_on_delay_state);
+  assert(!sim.power_locked);
+  assert(0 == sim.pulse_timer);
   assert("" == sim.Connect());
   assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
   sim.power_on_delay = true;
   sim.power_on_delay_state = true;
+  sim.power_locked = true;
+  sim.pulse_timer = 40;
   assert(FormatOk(true) == sim.Send("ON"));
   assert(!sim.power_on_delay);
   assert(!sim.power_on_delay_state);
+  assert(!sim.power_locked);
+  assert(0 == sim.pulse_timer);
   assert(sim.relay_on);
+}
+
+static void TestOnResponseWriteFailureTurnsOff(void) {
+  GrinderTcpDriverSim sim;
+  assert(sim.Start());
+  assert("" == sim.Connect());
+  assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
+  sim.response_write_succeeds = false;
+  assert("" == sim.Send("ON"));
+  assert(!sim.connected);
+  assert(!sim.relay_on);
+  assert(!sim.authorized_on);
+}
+
+static void TestRestartDuringOnTurnsOff(void) {
+  GrinderTcpDriverSim sim;
+  assert(sim.Start());
+  assert("" == sim.Connect());
+  assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
+  assert(FormatOk(true) == sim.Send("ON"));
+  sim.Restart();
+  assert(sim.server_open);
+  assert(!sim.connected);
+  assert(!sim.relay_on);
+  assert(!sim.authorized_on);
 }
 
 static void TestQuietDefaultsDisableNoisyServices(void) {
@@ -692,7 +744,9 @@ int main(void) {
   TestBadCommandClosesWithOff();
   TestDuplicateHelloClosesWithOff();
   TestUnsupportedRelayLayoutRefusesStart();
-  TestPowerDelayClearedBeforeOn();
+  TestPowerControlsClearedBeforeOn();
+  TestOnResponseWriteFailureTurnsOff();
+  TestRestartDuringOnTurnsOff();
   TestQuietDefaultsDisableNoisyServices();
   TestQuietDefaultsAreNotRewrittenInLoop();
   puts("grinder_tcp_driver_sim_test passed");

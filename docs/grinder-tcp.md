@@ -68,6 +68,8 @@ The driver forces `Power1 OFF` on:
 
 It also blocks or immediately cancels non-TCP `Power1 ON` attempts from Web UI, HTTP API, MQTT, buttons, rules, timers, device groups, or retained state. External `OFF` clears TCP ownership.
 
+At startup and before each TCP `ON`, the firmware clears `PowerLock1`, `PulseTime1`, and the power-on delay so retained Tasmota settings cannot block startup or stop a dose early. If an active-client response cannot be written completely, the connection is closed and `Power1` is forced off.
+
 The firmware applies quiet defaults for grinder use: MQTT publish/control, Home Assistant discovery, timers, rules, emulation, device groups, MI32 BLE, Matter, Wizmote, and Berry autoexec are disabled. mDNS is enabled. These are persistent Tasmota settings, so do not flash this profile onto a plug that should still be a general automation device.
 
 ## TCP Protocol

@@ -132,7 +132,10 @@ void GrinderTcpApplyQuietSettings(void) {
   Settings->rule_once = 0;
 }
 
-void GrinderTcpNeutralizePowerDelay(void) {
+void GrinderTcpNeutralizePowerControls(void) {
+  Settings->power_lock &= (POWER_MASK ^ 1);
+  Settings->pulse_timer[0] = 0;
+  TasmotaGlobal.pulse_timer[0] = 0;
   Settings->param[P_POWER_ON_DELAY2] = 0;
   TasmotaGlobal.power_on_delay = 0;
   TasmotaGlobal.power_on_delay_state = 0;
@@ -179,7 +182,7 @@ bool GrinderTcpRelayHardwareSupported(void) {
 void GrinderTcpRelayOffDirect(void) {
   GrinderTcp.authorized_on = false;
   GrinderTcp.on_since = 0;
-  GrinderTcpNeutralizePowerDelay();
+  GrinderTcpNeutralizePowerControls();
   TasmotaGlobal.power &= (POWER_MASK ^ 1);
   TasmotaGlobal.last_power &= (POWER_MASK ^ 1);
   TasmotaGlobal.blink_mask &= (POWER_MASK ^ 1);
@@ -204,7 +207,7 @@ void GrinderTcpRelayOnCommand(void) {
     return;
   }
   const bool was_on = GrinderTcpRelayStateOn();
-  GrinderTcpNeutralizePowerDelay();
+  GrinderTcpNeutralizePowerControls();
   GrinderTcp.authorized_on = true;
   GrinderTcp.tcp_power_command = true;
   ExecuteCommandPower(1, POWER_ON, SRC_IGNORE);
@@ -219,27 +222,27 @@ void GrinderTcpRelayOnCommand(void) {
   }
 }
 
-void GrinderTcpWriteLine(WiFiClient &client, const char *line) {
-  client.print(line);
-  client.print('\n');
+bool GrinderTcpWriteLine(WiFiClient &client, const char *line) {
+  const size_t length = strlen(line);
+  return (length == client.write((const uint8_t*)line, length)) && (1 == client.write((uint8_t)'\n'));
 }
 
-void GrinderTcpWriteOk(WiFiClient &client) {
+bool GrinderTcpWriteOk(WiFiClient &client) {
   char response[48];
   GrinderTcpFormatOk(response, sizeof(response), GrinderTcp.plug_mac, GrinderTcpRelayStateOn());
-  GrinderTcpWriteLine(client, response);
+  return GrinderTcpWriteLine(client, response);
 }
 
-void GrinderTcpWriteBusy(WiFiClient &client) {
+bool GrinderTcpWriteBusy(WiFiClient &client) {
   char response[32];
   GrinderTcpFormatBusy(response, sizeof(response), GrinderTcp.plug_mac);
-  GrinderTcpWriteLine(client, response);
+  return GrinderTcpWriteLine(client, response);
 }
 
-void GrinderTcpWriteErr(WiFiClient &client, const uint32_t reason) {
+bool GrinderTcpWriteErr(WiFiClient &client, const uint32_t reason) {
   char response[64];
   GrinderTcpFormatErr(response, sizeof(response), GrinderTcp.plug_mac, (GrinderTcpReason)reason);
-  GrinderTcpWriteLine(client, response);
+  return GrinderTcpWriteLine(client, response);
 }
 
 void GrinderTcpResetActiveClient(void) {
@@ -281,6 +284,15 @@ void GrinderTcpFinishActiveClose(void) {
   }
 }
 
+void GrinderTcpWriteActiveErrAndClose(const uint32_t reason) {
+  GrinderTcpRelayOff();
+  if (GrinderTcpWriteErr(GrinderTcp.client, reason)) {
+    GrinderTcpScheduleActiveClose(false);
+  } else {
+    GrinderTcpCloseActiveNow(false);
+  }
+}
+
 void GrinderTcpScheduleClosingClient(WiFiClient &client) {
   for (uint32_t i = 0; i < GRINDER_TCP_BUSY_CLOSE_SLOTS; i++) {
     if (!GrinderTcp.closing[i].open) {
@@ -318,7 +330,10 @@ void GrinderTcpAccept(WiFiClient &client) {
 
 void GrinderTcpRejectBusy(WiFiClient &client) {
   client.setNoDelay(true);
-  GrinderTcpWriteBusy(client);
+  if (!GrinderTcpWriteBusy(client)) {
+    client.stop();
+    return;
+  }
   GrinderTcpScheduleClosingClient(client);
 }
 
@@ -326,54 +341,52 @@ void GrinderTcpProcessLine(const char *line) {
   const GrinderTcpParseResult result = GrinderTcpParseLine(line, GrinderTcp.greeted);
   GrinderTcp.last_rx = millis();
   if (GRINDER_TCP_REASON_NONE != result.reason) {
-    GrinderTcpRelayOff();
-    GrinderTcpWriteErr(GrinderTcp.client, result.reason);
-    GrinderTcpScheduleActiveClose(false);
+    GrinderTcpWriteActiveErrAndClose(result.reason);
     return;
   }
+  bool close_after_response = false;
   switch (result.action) {
     case GRINDER_TCP_ACTION_HELLO:
       GrinderTcp.greeted = true;
       GrinderTcp.authorized_on = false;
-      GrinderTcpWriteOk(GrinderTcp.client);
       break;
     case GRINDER_TCP_ACTION_PING:
-      GrinderTcpWriteOk(GrinderTcp.client);
       break;
     case GRINDER_TCP_ACTION_OFF:
       GrinderTcpRelayOff();
-      GrinderTcpWriteOk(GrinderTcp.client);
       break;
     case GRINDER_TCP_ACTION_ON:
       GrinderTcpRelayOnCommand();
-      GrinderTcpWriteOk(GrinderTcp.client);
       break;
     case GRINDER_TCP_ACTION_STATE:
-      GrinderTcpWriteOk(GrinderTcp.client);
       break;
     case GRINDER_TCP_ACTION_BYE:
       GrinderTcpRelayOff();
-      GrinderTcpWriteOk(GrinderTcp.client);
-      GrinderTcpScheduleActiveClose(false);
+      close_after_response = true;
       break;
     default:
-      GrinderTcpRelayOff();
-      GrinderTcpWriteErr(GrinderTcp.client, GRINDER_TCP_REASON_UNKNOWN_COMMAND);
-      GrinderTcpScheduleActiveClose(false);
-      break;
+      GrinderTcpWriteActiveErrAndClose(GRINDER_TCP_REASON_UNKNOWN_COMMAND);
+      return;
+  }
+  if (!GrinderTcpWriteOk(GrinderTcp.client)) {
+    GrinderTcpCloseActiveNow(true);
+    return;
+  }
+  if (close_after_response) {
+    GrinderTcpScheduleActiveClose(false);
   }
 }
 
 void GrinderTcpProcessEmergencyOff(void) {
   GrinderTcp.last_rx = millis();
   if (!GrinderTcp.greeted) {
-    GrinderTcpRelayOff();
-    GrinderTcpWriteErr(GrinderTcp.client, GRINDER_TCP_REASON_BEFORE_HELLO);
-    GrinderTcpScheduleActiveClose(false);
+    GrinderTcpWriteActiveErrAndClose(GRINDER_TCP_REASON_BEFORE_HELLO);
     return;
   }
   GrinderTcpRelayOff();
-  GrinderTcpWriteOk(GrinderTcp.client);
+  if (!GrinderTcpWriteOk(GrinderTcp.client)) {
+    GrinderTcpCloseActiveNow(false);
+  }
 }
 
 void GrinderTcpReadClient(void) {
@@ -391,13 +404,9 @@ void GrinderTcpReadClient(void) {
     } else if (GRINDER_TCP_READ_EMERGENCY_OFF == result) {
       GrinderTcpProcessEmergencyOff();
     } else if (GRINDER_TCP_READ_OVERFLOW == result) {
-      GrinderTcpRelayOff();
-      GrinderTcpWriteErr(GrinderTcp.client, GRINDER_TCP_REASON_LINE_OVERFLOW);
-      GrinderTcpScheduleActiveClose(false);
+      GrinderTcpWriteActiveErrAndClose(GRINDER_TCP_REASON_LINE_OVERFLOW);
     } else if (GRINDER_TCP_READ_INVALID == result) {
-      GrinderTcpRelayOff();
-      GrinderTcpWriteErr(GrinderTcp.client, GRINDER_TCP_REASON_INVALID_CHAR);
-      GrinderTcpScheduleActiveClose(false);
+      GrinderTcpWriteActiveErrAndClose(GRINDER_TCP_REASON_INVALID_CHAR);
     }
   }
 }
@@ -564,7 +573,7 @@ void GrinderTcpStart(void) {
   if (GrinderTcp.server_open) {
     return;
   }
-  GrinderTcpNeutralizePowerDelay();
+  GrinderTcpNeutralizePowerControls();
   GrinderTcpServer.begin();
   GrinderTcpServer.setNoDelay(true);
   GrinderTcp.server_open = true;
@@ -600,14 +609,14 @@ void GrinderTcpPreInit(void) {
   TasmotaGlobal.power = 0;
   TasmotaGlobal.last_power = 0;
   GrinderTcp.authorized_on = false;
-  GrinderTcpNeutralizePowerDelay();
+  GrinderTcpNeutralizePowerControls();
 }
 
 void GrinderTcpInit(void) {
   GrinderTcpApplyQuietSettings();
   GrinderTcpCacheIdentity();
   GrinderTcpLineReset(&GrinderTcp.reader);
-  GrinderTcpNeutralizePowerDelay();
+  GrinderTcpNeutralizePowerControls();
   GrinderTcpRelayOff();
 }
 
