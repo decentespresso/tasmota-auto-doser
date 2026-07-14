@@ -25,16 +25,21 @@ struct {
   uint32_t observed_ip = 0;
   uint32_t active_remote_ip = 0;
   uint32_t last_event_at = 0;
+  uint32_t identity_check_at = 0;
   uint16_t active_remote_port = 0;
   char observed_bssid[18] = { 0 };
   char last_event[24] = "boot";
   char last_close_reason[24] = "none";
   char last_fail_safe_reason[24] = "boot";
+  char last_network_reason[24] = "boot";
   bool identity_valid = false;
+  bool network_connected = false;
 } GrinderTcpDiag;
 
 bool GrinderTcpRelayOwned(void);
 bool GrinderTcpRelayStateOn(void);
+void GrinderTcpRestartServer(const char *reason);
+void GrinderTcpStop(const char *reason);
 
 void GrinderTcpRecordEvent(const char *event) {
   strlcpy(GrinderTcpDiag.last_event, event, sizeof(GrinderTcpDiag.last_event));
@@ -60,25 +65,68 @@ void GrinderTcpObserveDiagnostics(void) {
   if (free_heap < GrinderTcpDiag.min_free_heap) {
     GrinderTcpDiag.min_free_heap = free_heap;
   }
-  if (!WifiHasIP()) {
+  if (!TimeReached(GrinderTcpDiag.identity_check_at)) {
     return;
   }
+  GrinderTcpDiag.identity_check_at = millis() + GRINDER_TCP_IDENTITY_CHECK;
+  if (!WifiHasIP()) {
+    if (GrinderTcpDiag.network_connected) {
+      GrinderTcpDiag.network_down++;
+      GrinderTcpDiag.network_connected = false;
+      GrinderTcpStop("network_down");
+    }
+    return;
+  }
+  const bool reconnected = !GrinderTcpDiag.network_connected;
   char bssid[18];
   GrinderTcpFormatBssid(bssid, sizeof(bssid));
   const uint32_t local_ip = (uint32_t)WiFi.localIP();
+  bool ip_changed = false;
+  bool bssid_changed = false;
   if (GrinderTcpDiag.identity_valid) {
     if (local_ip != GrinderTcpDiag.observed_ip) {
       GrinderTcpDiag.local_ip_changes++;
-      GrinderTcpRecordEvent("local_ip_change");
+      ip_changed = true;
     }
     if (strcmp(bssid, GrinderTcpDiag.observed_bssid)) {
       GrinderTcpDiag.bssid_changes++;
-      GrinderTcpRecordEvent("bssid_change");
+      bssid_changed = true;
     }
   }
   GrinderTcpDiag.observed_ip = local_ip;
   strlcpy(GrinderTcpDiag.observed_bssid, bssid, sizeof(GrinderTcpDiag.observed_bssid));
   GrinderTcpDiag.identity_valid = true;
+  GrinderTcpDiag.network_connected = true;
+  if (!reconnected && !ip_changed && !bssid_changed) {
+    if (!GrinderTcp.server_started) {
+      GrinderTcpRestartServer("listener_missing");
+    }
+    return;
+  }
+  GrinderTcpDiag.network_generation++;
+  const char *reason = "network_reconnect";
+  if (ip_changed && bssid_changed) {
+    reason = "ip_bssid_change";
+  } else if (ip_changed) {
+    reason = "local_ip_change";
+  } else if (bssid_changed) {
+    reason = "bssid_change";
+  }
+  strlcpy(GrinderTcpDiag.last_network_reason, reason, sizeof(GrinderTcpDiag.last_network_reason));
+  GrinderTcpRestartServer(reason);
+}
+
+void GrinderTcpNetworkUp(void) {
+  GrinderTcpDiag.network_up++;
+  GrinderTcpDiag.identity_check_at = 0;
+  GrinderTcpObserveDiagnostics();
+}
+
+void GrinderTcpNetworkDown(void) {
+  GrinderTcpDiag.network_down++;
+  GrinderTcpDiag.network_connected = false;
+  GrinderTcpDiag.identity_check_at = 0;
+  GrinderTcpStop("network_down");
 }
 
 const char kGrinderCommands[] PROGMEM = "Grinder|Status";
@@ -104,11 +152,11 @@ void CmndGrinderStatus(void) {
   Response_P(PSTR("{\"GrinderStatus\":{\"Net\":{\"Up\":%u,\"IP\":\"%s\",\"Mask\":\"%s\",\"GW\":\"%s\",\"BSSID\":\"%s\",\"RSSI\":%d,\"Gen\":%u},"),
              WifiHasIP(), local_ip.c_str(), subnet.c_str(), gateway.c_str(), bssid, WiFi.RSSI(), GrinderTcpDiag.network_generation);
   ResponseAppend_P(PSTR("\"TCP\":{\"Listen\":%u,\"Gen\":%u,\"Client\":%u,\"Hello\":%u,\"Closing\":%u,\"PeerIP\":\"%s\",\"PeerPort\":%u,\"RxAge\":%u},"),
-                   GrinderTcp.server_open, GrinderTcpDiag.server_generation, GrinderTcp.client_open, GrinderTcp.greeted, GrinderTcp.close_pending, remote_ip.c_str(), GrinderTcpDiag.active_remote_port, last_rx_age);
+                   GrinderTcp.server_started, GrinderTcpDiag.server_generation, GrinderTcp.client_open, GrinderTcp.greeted, GrinderTcp.close_pending, remote_ip.c_str(), GrinderTcpDiag.active_remote_port, last_rx_age);
   ResponseAppend_P(PSTR("\"mDNS\":{\"Ad\":%u,\"Up\":%u},\"Relay\":{\"Owner\":%u,\"On\":%u},\"Heap\":{\"Free\":%u,\"Min\":%u},"),
                    GrinderTcp.advertised, Mdns.begun, GrinderTcpRelayOwned(), GrinderTcpRelayStateOn(), free_heap, min_free_heap);
-  ResponseAppend_P(PSTR("\"Last\":{\"Event\":\"%s\",\"Age\":%u,\"Close\":\"%s\",\"Off\":\"%s\"},"),
-                   GrinderTcpDiag.last_event, event_age, GrinderTcpDiag.last_close_reason, GrinderTcpDiag.last_fail_safe_reason);
+  ResponseAppend_P(PSTR("\"Last\":{\"Event\":\"%s\",\"Age\":%u,\"Net\":\"%s\",\"Close\":\"%s\",\"Off\":\"%s\"},"),
+                   GrinderTcpDiag.last_event, event_age, GrinderTcpDiag.last_network_reason, GrinderTcpDiag.last_close_reason, GrinderTcpDiag.last_fail_safe_reason);
   ResponseAppend_P(PSTR("\"Count\":{\"NetUp\":%u,\"NetDn\":%u,\"IP\":%u,\"BSSID\":%u,\"Start\":%u,\"Stop\":%u,\"Restart\":%u,\"Accept\":%u,\"Busy\":%u,\"Close\":%u,"),
                    GrinderTcpDiag.network_up, GrinderTcpDiag.network_down, GrinderTcpDiag.local_ip_changes, GrinderTcpDiag.bssid_changes, GrinderTcpDiag.server_starts, GrinderTcpDiag.server_stops, GrinderTcpDiag.forced_restarts, GrinderTcpDiag.accepted_clients, GrinderTcpDiag.busy_clients, GrinderTcpDiag.active_disconnects);
   ResponseAppend_P(PSTR("\"HelloTO\":%u,\"HeartbeatTO\":%u,\"Protocol\":%u,\"MdnsTry\":%u,\"MdnsOk\":%u,\"MdnsFail\":%u,\"MdnsRefresh\":%u,\"MdnsDown\":%u,\"MdnsSvcFail\":%u,\"MdnsTxtFail\":%u}}}"),

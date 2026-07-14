@@ -66,6 +66,10 @@
 #define GRINDER_TCP_MAX_BYTES_PER_LOOP 256
 #endif
 
+#ifndef GRINDER_TCP_IDENTITY_CHECK
+#define GRINDER_TCP_IDENTITY_CHECK 5000
+#endif
+
 #ifndef GRINDER_TCP_MODEL
 #define GRINDER_TCP_MODEL "NOUS_A6T"
 #endif
@@ -107,7 +111,7 @@ struct {
   uint32_t close_at = 0;
   uint32_t mdns_retry_at = 0;
   char plug_mac[18] = { 0 };
-  bool server_open = false;
+  bool server_started = false;
   bool client_open = false;
   bool greeted = false;
   bool advertised = false;
@@ -119,7 +123,6 @@ struct {
 #include "tasmota_xdrv_driver/xdrv_95_grinder_tcp_diagnostics.h"
 
 void GrinderTcpAdvertise(void);
-void GrinderTcpStop(void);
 
 void GrinderTcpApplyQuietSettings(void) {
   const bool corrected = Settings->deepsleep || !Settings->flag5.wifi_no_sleep || Settings->flag3.use_wifi_rescan;
@@ -532,7 +535,7 @@ void GrinderTcpReadClient(void) {
 }
 
 void GrinderTcpPollServer(void) {
-  if (!GrinderTcp.server_open) {
+  if (!GrinderTcp.server_started) {
     return;
   }
   uint32_t accepted = 0;
@@ -591,8 +594,8 @@ void GrinderTcpLoop(void) {
   GrinderTcpFinishActiveClose();
   GrinderTcpFinishClosingClients();
   GrinderTcpFlushActiveTx();
-  if (GrinderTcp.server_open && !GrinderTcpRelayHardwareSupported()) {
-    GrinderTcpStop();
+  if (GrinderTcp.server_started && !GrinderTcpRelayHardwareSupported()) {
+    GrinderTcpStop("unsupported_layout");
     return;
   }
   GrinderTcpReadClient();
@@ -601,7 +604,7 @@ void GrinderTcpLoop(void) {
   GrinderTcpEnforceRelayOwnership();
   GrinderTcpKeepAwakeWhileConnected();
   GrinderTcpPollServer();
-  if (GrinderTcp.server_open && !GrinderTcpRelayStateOn()) {
+  if (GrinderTcp.server_started && !GrinderTcpRelayStateOn()) {
     if (!Mdns.begun) {
       GrinderTcp.advertised = false;
     }
@@ -700,13 +703,13 @@ void GrinderTcpStart(void) {
     AddLog(LOG_LEVEL_ERROR, PSTR("GTC: Unsupported relay layout"));
     return;
   }
-  if (GrinderTcp.server_open) {
+  if (GrinderTcp.server_started) {
     return;
   }
   GrinderTcpNeutralizePowerControls();
   GrinderTcpServer.begin();
   GrinderTcpServer.setNoDelay(true);
-  GrinderTcp.server_open = true;
+  GrinderTcp.server_started = true;
   GrinderTcpDiag.server_starts++;
   GrinderTcpDiag.server_generation++;
   GrinderTcpRecordEvent("server_started");
@@ -721,20 +724,36 @@ void GrinderTcpStopClosingClients(void) {
       GrinderTcp.closing[i].client.stop();
       GrinderTcp.closing[i].open = false;
       GrinderTcp.closing[i].close_at = 0;
+      GrinderTcpResetTx(GrinderTcp.closing[i].tx);
     }
   }
 }
 
-void GrinderTcpStop(void) {
-  GrinderTcpCloseActiveNow(true);
+void GrinderTcpStop(const char *reason) {
+  GrinderTcpRelayOff(reason);
+  GrinderTcpCloseActiveNow(false, reason);
   GrinderTcpStopClosingClients();
-  if (GrinderTcp.server_open) {
-    GrinderTcpServer.stop();
-    GrinderTcp.server_open = false;
+  const bool was_started = GrinderTcp.server_started;
+  GrinderTcpServer.stop();
+  GrinderTcp.server_started = false;
+  if (was_started) {
     GrinderTcpDiag.server_stops++;
     GrinderTcpRecordEvent("server_stopped");
   }
   GrinderTcpRemoveMdnsService();
+}
+
+void GrinderTcpRestartServer(const char *reason) {
+  const bool restarting = GrinderTcpDiag.server_generation > 0;
+  GrinderTcpStop(reason);
+  if (!WifiHasIP()) {
+    return;
+  }
+  if (restarting) {
+    GrinderTcpDiag.forced_restarts++;
+  }
+  AddLog(LOG_LEVEL_INFO, PSTR("GTC: %s reason %s network %u"), restarting ? PSTR("Restart") : PSTR("Start"), reason, GrinderTcpDiag.network_generation);
+  GrinderTcpStart();
 }
 
 void GrinderTcpPreInit(void) {
@@ -790,22 +809,18 @@ bool Xdrv95(uint32_t function) {
       break;
     case FUNC_NETWORK_UP:
       if (!TasmotaGlobal.restart_flag) {
-        GrinderTcpDiag.network_up++;
-        GrinderTcpRecordEvent("network_up");
         GrinderTcpApplyQuietSettings();
-        GrinderTcpStart();
+        GrinderTcpNetworkUp();
       }
       break;
     case FUNC_LOOP:
       GrinderTcpLoop();
       break;
     case FUNC_NETWORK_DOWN:
-      GrinderTcpDiag.network_down++;
-      GrinderTcpRecordEvent("network_down");
-      GrinderTcpStop();
+      GrinderTcpNetworkDown();
       break;
     case FUNC_SAVE_BEFORE_RESTART:
-      GrinderTcpStop();
+      GrinderTcpStop("device_restart");
       break;
     case FUNC_COMMAND:
       result = DecodeCommand(kGrinderCommands, GrinderCommand);
@@ -817,7 +832,7 @@ bool Xdrv95(uint32_t function) {
       result = GrinderTcpSetDevicePower();
       break;
     case FUNC_ACTIVE:
-      result = GrinderTcp.server_open || GrinderTcp.client_open;
+      result = GrinderTcp.server_started || GrinderTcp.client_open;
       break;
   }
   return result;

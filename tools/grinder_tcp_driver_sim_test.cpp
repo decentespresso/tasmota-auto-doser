@@ -39,7 +39,7 @@ struct GrinderTcpDriverSim {
   bool relay_on = false;
   bool authorized_on = false;
   bool close_pending = false;
-  bool server_open = false;
+  bool server_started = false;
   bool power_on_delay = false;
   bool power_on_delay_state = false;
   bool power_locked = false;
@@ -85,6 +85,11 @@ struct GrinderTcpDriverSim {
   bool response_write_blocked = false;
   bool response_pending = false;
   uint32_t response_deadline = 0;
+  uint32_t network_generation = 0;
+  uint32_t restart_count = 0;
+  std::string local_ip;
+  std::string bssid;
+  bool network_connected = false;
 
   bool RelayOwned(void) const {
     return connected && greeted && authorized_on && !close_pending;
@@ -203,20 +208,20 @@ struct GrinderTcpDriverSim {
   }
 
   void Loop(void) {
-    if (server_open && !RelayHardwareSupported()) {
+    if (server_started && !RelayHardwareSupported()) {
       RelayOff();
-      server_open = false;
+      server_started = false;
       return;
     }
     EnforceOwnership();
     KeepAwakeWhileConnected();
-    if (server_open && !relay_on) {
+    if (server_started && !relay_on) {
       Advertise();
     }
   }
 
   std::string Connect(void) {
-    if (!server_open && !Start()) {
+    if (!server_started && !Start()) {
       return "";
     }
     if (connected) {
@@ -240,12 +245,12 @@ struct GrinderTcpDriverSim {
   bool Start(void) {
     if (!RelayHardwareSupported()) {
       RelayOff();
-      server_open = false;
+      server_started = false;
       return false;
     }
     ApplyQuietSettings();
     NeutralizePowerControls();
-    server_open = true;
+    server_started = true;
     return true;
   }
 
@@ -311,8 +316,27 @@ struct GrinderTcpDriverSim {
 
   void Restart(void) {
     DisconnectActive();
-    server_open = false;
+    server_started = false;
+    restart_count++;
     Start();
+  }
+
+  void NetworkUp(const char *next_ip, const char *next_bssid) {
+    const bool changed = !network_connected || (local_ip != next_ip) || (bssid != next_bssid);
+    network_connected = true;
+    local_ip = next_ip;
+    bssid = next_bssid;
+    if (!changed) {
+      return;
+    }
+    network_generation++;
+    Restart();
+  }
+
+  void NetworkDown(void) {
+    network_connected = false;
+    DisconnectActive();
+    server_started = false;
   }
 
   std::string Reply(const std::string &response) {
@@ -621,19 +645,19 @@ static void TestUnsupportedRelayLayoutRefusesStart(void) {
   GrinderTcpDriverSim multi_relay;
   multi_relay.devices_present = 2;
   assert(!multi_relay.Start());
-  assert(!multi_relay.server_open);
+  assert(!multi_relay.server_started);
   assert(!multi_relay.relay_on);
 
   GrinderTcpDriverSim missing_relay;
   missing_relay.relay0_used = false;
   assert(!missing_relay.Start());
-  assert(!missing_relay.server_open);
+  assert(!missing_relay.server_started);
   assert(!missing_relay.relay_on);
 
   GrinderTcpDriverSim bistable_relay;
   bistable_relay.rel_bistable = true;
   assert(!bistable_relay.Start());
-  assert(!bistable_relay.server_open);
+  assert(!bistable_relay.server_started);
   assert(!bistable_relay.relay_on);
 }
 
@@ -700,10 +724,37 @@ static void TestRestartDuringOnTurnsOff(void) {
   assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
   assert(FormatOk(true) == sim.Send("ON"));
   sim.Restart();
-  assert(sim.server_open);
+  assert(sim.server_started);
   assert(!sim.connected);
   assert(!sim.relay_on);
   assert(!sim.authorized_on);
+}
+
+static void TestNetworkGenerationRestartsOnSameIpRoam(void) {
+  GrinderTcpDriverSim sim;
+  sim.NetworkUp("192.168.178.30", "10:20:30:40:50:60");
+  assert(1 == sim.network_generation);
+  assert(1 == sim.restart_count);
+  sim.NetworkUp("192.168.178.30", "10:20:30:40:50:60");
+  assert(1 == sim.network_generation);
+  assert(1 == sim.restart_count);
+  sim.NetworkUp("192.168.178.30", "10:20:30:40:50:61");
+  assert(2 == sim.network_generation);
+  assert(2 == sim.restart_count);
+}
+
+static void TestNetworkReconnectRestartsWithUnchangedIdentity(void) {
+  GrinderTcpDriverSim sim;
+  sim.NetworkUp("192.168.178.30", "10:20:30:40:50:60");
+  assert("" == sim.Connect());
+  assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
+  assert(FormatOk(true) == sim.Send("ON"));
+  sim.NetworkDown();
+  assert(!sim.relay_on);
+  sim.NetworkUp("192.168.178.30", "10:20:30:40:50:60");
+  assert(2 == sim.network_generation);
+  assert(2 == sim.restart_count);
+  assert(sim.server_started);
 }
 
 static void TestQuietDefaultsDisableNoisyServices(void) {
@@ -781,6 +832,8 @@ int main(void) {
   TestOnResponseWriteFailureTurnsOff();
   TestBlockedOnResponseTurnsOffAtTxDeadline();
   TestRestartDuringOnTurnsOff();
+  TestNetworkGenerationRestartsOnSameIpRoam();
+  TestNetworkReconnectRestartsWithUnchangedIdentity();
   TestQuietDefaultsDisableNoisyServices();
   TestQuietDefaultsAreNotRewrittenInLoop();
   TestAuthenticatedClientKeepsWifiAwakeWhileIdle();
