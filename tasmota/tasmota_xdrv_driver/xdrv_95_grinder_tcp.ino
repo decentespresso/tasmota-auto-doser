@@ -116,6 +116,8 @@ struct {
   bool tcp_power_command = false;
 } GrinderTcp;
 
+#include "tasmota_xdrv_driver/xdrv_95_grinder_tcp_diagnostics.h"
+
 void GrinderTcpAdvertise(void);
 void GrinderTcpStop(void);
 
@@ -207,7 +209,10 @@ bool GrinderTcpRelayHardwareSupported(void) {
          !TasmotaGlobal.rel_bistable;
 }
 
-void GrinderTcpRelayOffDirect(void) {
+void GrinderTcpRelayOffDirect(const char *reason = nullptr) {
+  if (reason) {
+    GrinderTcpRecordFailSafe(reason);
+  }
   GrinderTcp.authorized_on = false;
   GrinderTcpNeutralizePowerControls();
   TasmotaGlobal.power &= (POWER_MASK ^ 1);
@@ -218,7 +223,8 @@ void GrinderTcpRelayOffDirect(void) {
   }
 }
 
-void GrinderTcpRelayOff(void) {
+void GrinderTcpRelayOff(const char *reason = "requested_off") {
+  GrinderTcpRecordFailSafe(reason);
   const bool sync_state = GrinderTcpRelayStateOn() || GrinderTcp.authorized_on || (TasmotaGlobal.blink_mask & 1);
   GrinderTcpRelayOffDirect();
   if (!sync_state) {
@@ -301,7 +307,12 @@ bool GrinderTcpQueueErr(const uint32_t reason) {
   return GrinderTcpQueueTx(GrinderTcp.tx, response, true);
 }
 
-void GrinderTcpResetActiveClient(void) {
+void GrinderTcpResetActiveClient(const char *reason) {
+  if (GrinderTcp.client_open) {
+    GrinderTcpDiag.active_disconnects++;
+    strlcpy(GrinderTcpDiag.last_close_reason, reason, sizeof(GrinderTcpDiag.last_close_reason));
+    GrinderTcpRecordEvent(reason);
+  }
   GrinderTcp.client.stop();
   GrinderTcp.client_open = false;
   GrinderTcp.greeted = false;
@@ -309,27 +320,30 @@ void GrinderTcpResetActiveClient(void) {
   GrinderTcp.close_pending = false;
   GrinderTcp.last_rx = 0;
   GrinderTcp.close_at = 0;
+  GrinderTcpDiag.active_remote_ip = 0;
+  GrinderTcpDiag.active_remote_port = 0;
   GrinderTcpLineReset(&GrinderTcp.reader);
   GrinderTcpResetTx(GrinderTcp.tx);
 }
 
-void GrinderTcpCloseActiveNow(const bool relay_off) {
+void GrinderTcpCloseActiveNow(const bool relay_off, const char *reason = "disconnect") {
   if (relay_off) {
-    GrinderTcpRelayOff();
+    GrinderTcpRelayOff(reason);
   }
   if (GrinderTcp.client_open) {
-    GrinderTcpResetActiveClient();
+    GrinderTcpResetActiveClient(reason);
   }
 }
 
-void GrinderTcpScheduleActiveClose(const bool relay_off) {
+void GrinderTcpScheduleActiveClose(const bool relay_off, const char *reason = "protocol_close") {
   if (relay_off) {
-    GrinderTcpRelayOff();
+    GrinderTcpRelayOff(reason);
   }
   if (!GrinderTcp.client_open) {
-    GrinderTcpResetActiveClient();
+    GrinderTcpResetActiveClient(reason);
     return;
   }
+  strlcpy(GrinderTcpDiag.last_close_reason, reason, sizeof(GrinderTcpDiag.last_close_reason));
   GrinderTcp.authorized_on = false;
   GrinderTcp.close_pending = true;
   GrinderTcp.close_at = millis() + GRINDER_TCP_CLOSE_GRACE;
@@ -337,7 +351,7 @@ void GrinderTcpScheduleActiveClose(const bool relay_off) {
 
 void GrinderTcpFinishActiveClose(void) {
   if (GrinderTcp.client_open && GrinderTcp.close_pending && TimeReached(GrinderTcp.close_at)) {
-    GrinderTcpResetActiveClient();
+    GrinderTcpResetActiveClient(GrinderTcpDiag.last_close_reason);
   }
 }
 
@@ -359,7 +373,8 @@ void GrinderTcpFlushActiveTx(void) {
 }
 
 void GrinderTcpQueueActiveErrAndClose(const uint32_t reason) {
-  GrinderTcpRelayOff();
+  GrinderTcpDiag.protocol_errors++;
+  GrinderTcpRelayOff("protocol_error");
   if (!GrinderTcpQueueErr(reason)) {
     GrinderTcpCloseActiveNow(false);
   }
@@ -427,9 +442,15 @@ void GrinderTcpAccept(WiFiClient &client) {
   GrinderTcp.close_at = 0;
   GrinderTcpLineReset(&GrinderTcp.reader);
   GrinderTcpResetTx(GrinderTcp.tx);
+  GrinderTcpDiag.accepted_clients++;
+  GrinderTcpDiag.active_remote_ip = (uint32_t)GrinderTcp.client.remoteIP();
+  GrinderTcpDiag.active_remote_port = GrinderTcp.client.remotePort();
+  GrinderTcpRecordEvent("client_accepted");
 }
 
 void GrinderTcpRejectBusy(WiFiClient &client) {
+  GrinderTcpDiag.busy_clients++;
+  GrinderTcpRecordEvent("client_busy");
   GrinderTcpScheduleClosingClient(client);
 }
 
@@ -527,19 +548,25 @@ void GrinderTcpCheckTimeout(void) {
     return;
   }
   if (!GrinderTcp.client.connected()) {
-    GrinderTcpCloseActiveNow(true);
+    GrinderTcpCloseActiveNow(true, "socket_closed");
     return;
   }
   const uint32_t timeout = GrinderTcp.greeted ? GRINDER_TCP_HEARTBEAT_TIMEOUT : GRINDER_TCP_HELLO_TIMEOUT;
   if (TimeReached(GrinderTcp.last_rx + timeout)) {
-    GrinderTcpCloseActiveNow(true);
+    if (GrinderTcp.greeted) {
+      GrinderTcpDiag.heartbeat_timeouts++;
+      GrinderTcpCloseActiveNow(true, "heartbeat_timeout");
+    } else {
+      GrinderTcpDiag.hello_timeouts++;
+      GrinderTcpCloseActiveNow(true, "hello_timeout");
+    }
   }
 }
 
 void GrinderTcpEnforceRelayOwnership(void) {
   if (GrinderTcpRelayStateOn()) {
     if (!GrinderTcpRelayOwned()) {
-      GrinderTcpRelayOffDirect();
+      GrinderTcpRelayOffDirect("ownership_lost");
     }
   } else {
     GrinderTcp.authorized_on = false;
@@ -553,6 +580,7 @@ void GrinderTcpKeepAwakeWhileGrinding(void) {
 }
 
 void GrinderTcpLoop(void) {
+  GrinderTcpObserveDiagnostics();
   GrinderTcpFinishActiveClose();
   GrinderTcpFinishClosingClients();
   GrinderTcpFlushActiveTx();
@@ -613,6 +641,7 @@ void GrinderTcpAdvertise(void) {
   GrinderTcp.mdns_retry_at = millis() + GRINDER_TCP_MDNS_RETRY;
   GrinderTcpEnsureMdns();
   if (!Mdns.begun) {
+    GrinderTcpDiag.mdns_responder_unavailable++;
     return;
   }
   if (GrinderTcp.advertised) {
@@ -629,6 +658,13 @@ void GrinderTcpAdvertise(void) {
   char proto_version[] = "1";
   const bool service_added = MDNS.addService(service, proto, GRINDER_TCP_PORT);
   const bool txt_added = GrinderTcpWriteMdnsTxt(service, proto, key_mac, key_name, key_model, key_proto, model, proto_version);
+  GrinderTcpDiag.mdns_attempts++;
+  if (!service_added) {
+    GrinderTcpDiag.mdns_service_failures++;
+  }
+  if (!txt_added) {
+    GrinderTcpDiag.mdns_txt_failures++;
+  }
   AddLog(LOG_LEVEL_INFO,
          PSTR("GTC: mDNS service %u txt %u host %s mac %s port %u"),
          service_added,
@@ -638,6 +674,11 @@ void GrinderTcpAdvertise(void) {
          GRINDER_TCP_PORT);
   if (service_added && txt_added) {
     GrinderTcp.advertised = true;
+    GrinderTcpDiag.mdns_successes++;
+    GrinderTcpRecordEvent("mdns_registered");
+  } else {
+    GrinderTcpDiag.mdns_failures++;
+    GrinderTcpRecordEvent("mdns_failed");
   }
 }
 
@@ -659,6 +700,9 @@ void GrinderTcpStart(void) {
   GrinderTcpServer.begin();
   GrinderTcpServer.setNoDelay(true);
   GrinderTcp.server_open = true;
+  GrinderTcpDiag.server_starts++;
+  GrinderTcpDiag.server_generation++;
+  GrinderTcpRecordEvent("server_started");
   GrinderTcp.mdns_retry_at = 0;
   GrinderTcpAdvertise();
   AddLogServerActive(PSTR("Grinder TCP"));
@@ -680,6 +724,8 @@ void GrinderTcpStop(void) {
   if (GrinderTcp.server_open) {
     GrinderTcpServer.stop();
     GrinderTcp.server_open = false;
+    GrinderTcpDiag.server_stops++;
+    GrinderTcpRecordEvent("server_stopped");
   }
   GrinderTcpRemoveMdnsService();
 }
@@ -717,7 +763,7 @@ bool GrinderTcpSetDevicePowerGuard(power_t rpower, uint32_t source) {
   if (GrinderTcp.tcp_power_command && GrinderTcpRelayOwned()) {
     return false;
   }
-  GrinderTcpRelayOffDirect();
+  GrinderTcpRelayOffDirect("external_power_on");
   return true;
 }
 
@@ -737,6 +783,8 @@ bool Xdrv95(uint32_t function) {
       break;
     case FUNC_NETWORK_UP:
       if (!TasmotaGlobal.restart_flag) {
+        GrinderTcpDiag.network_up++;
+        GrinderTcpRecordEvent("network_up");
         GrinderTcpApplyQuietSettings();
         GrinderTcpStart();
       }
@@ -745,8 +793,15 @@ bool Xdrv95(uint32_t function) {
       GrinderTcpLoop();
       break;
     case FUNC_NETWORK_DOWN:
+      GrinderTcpDiag.network_down++;
+      GrinderTcpRecordEvent("network_down");
+      GrinderTcpStop();
+      break;
     case FUNC_SAVE_BEFORE_RESTART:
       GrinderTcpStop();
+      break;
+    case FUNC_COMMAND:
+      result = DecodeCommand(kGrinderCommands, GrinderCommand);
       break;
     case FUNC_SET_POWER:
       GrinderTcpObservePower();
