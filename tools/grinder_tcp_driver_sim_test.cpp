@@ -65,6 +65,9 @@ struct GrinderTcpDriverSim {
   bool wizmote_enabled = true;
   bool berry_autoexec_enabled = true;
   bool mdns_enabled = false;
+  uint32_t deep_sleep = 3600;
+  bool wifi_no_sleep = false;
+  bool wifi_rescan = true;
   uint32_t devices_present = 1;
   uint32_t closing_busy = 0;
   uint32_t direct_off_count = 0;
@@ -151,13 +154,16 @@ struct GrinderTcpDriverSim {
     }
   }
 
-  void KeepAwakeWhileGrinding(void) {
-    if (RelayOwned() && relay_on && (skip_sleep < 1)) {
+  void KeepAwakeWhileConnected(void) {
+    if (connected && greeted && !close_pending && (skip_sleep < 1)) {
       skip_sleep = 1;
     }
   }
 
   void ApplyQuietSettings(void) {
+    deep_sleep = 0;
+    wifi_no_sleep = true;
+    wifi_rescan = false;
     mqtt_enabled = false;
     mqtt_retained = false;
     hass_discovery = false;
@@ -203,7 +209,7 @@ struct GrinderTcpDriverSim {
       return;
     }
     EnforceOwnership();
-    KeepAwakeWhileGrinding();
+    KeepAwakeWhileConnected();
     if (server_open && !relay_on) {
       Advertise();
     }
@@ -716,8 +722,22 @@ static void TestQuietDefaultsDisableNoisyServices(void) {
   assert(!sim.wizmote_enabled);
   assert(!sim.berry_autoexec_enabled);
   assert(sim.mdns_enabled);
+  assert(0 == sim.deep_sleep);
+  assert(sim.wifi_no_sleep);
+  assert(!sim.wifi_rescan);
   assert(0 == sim.mqtt_disconnect_count);
   assert(0 == sim.udp_disconnect_count);
+}
+
+static void TestAuthenticatedClientKeepsWifiAwakeWhileIdle(void) {
+  GrinderTcpDriverSim sim;
+  assert(sim.Start());
+  assert("" == sim.Connect());
+  assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
+  sim.skip_sleep = 0;
+  sim.Loop();
+  assert(1 == sim.skip_sleep);
+  assert(!sim.relay_on);
 }
 
 static void TestQuietDefaultsAreNotRewrittenInLoop(void) {
@@ -763,6 +783,7 @@ int main(void) {
   TestRestartDuringOnTurnsOff();
   TestQuietDefaultsDisableNoisyServices();
   TestQuietDefaultsAreNotRewrittenInLoop();
+  TestAuthenticatedClientKeepsWifiAwakeWhileIdle();
   puts("grinder_tcp_driver_sim_test passed");
   return 0;
 }

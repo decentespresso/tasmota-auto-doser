@@ -122,6 +122,13 @@ void GrinderTcpAdvertise(void);
 void GrinderTcpStop(void);
 
 void GrinderTcpApplyQuietSettings(void) {
+  const bool corrected = Settings->deepsleep || !Settings->flag5.wifi_no_sleep || Settings->flag3.use_wifi_rescan;
+  Settings->deepsleep = 0;
+  Settings->flag5.wifi_no_sleep = 1;
+  Settings->flag3.use_wifi_rescan = 0;
+  if (corrected) {
+    AddLog(LOG_LEVEL_INFO, PSTR("GTC: Enforced DeepSleep 0, SetOption127 1, SetOption57 0"));
+  }
   Settings->flag.mqtt_add_global_info = 0;
   Settings->flag.mqtt_enabled = 0;
   Settings->flag.mqtt_response = 0;
@@ -573,8 +580,8 @@ void GrinderTcpEnforceRelayOwnership(void) {
   }
 }
 
-void GrinderTcpKeepAwakeWhileGrinding(void) {
-  if (GrinderTcpRelayOwned() && GrinderTcpRelayStateOn() && (TasmotaGlobal.skip_sleep < 1)) {
+void GrinderTcpKeepAwakeWhileConnected(void) {
+  if (GrinderTcp.client_open && GrinderTcp.greeted && !GrinderTcp.close_pending && (TasmotaGlobal.skip_sleep < 1)) {
     TasmotaGlobal.skip_sleep = 1;
   }
 }
@@ -592,7 +599,7 @@ void GrinderTcpLoop(void) {
   GrinderTcpFlushActiveTx();
   GrinderTcpCheckTimeout();
   GrinderTcpEnforceRelayOwnership();
-  GrinderTcpKeepAwakeWhileGrinding();
+  GrinderTcpKeepAwakeWhileConnected();
   GrinderTcpPollServer();
   if (GrinderTcp.server_open && !GrinderTcpRelayStateOn()) {
     if (!Mdns.begun) {
