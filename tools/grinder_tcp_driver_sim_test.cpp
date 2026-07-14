@@ -577,53 +577,6 @@ static void TestEmergencyOffAlias(void) {
   assert(!sim.authorized_on);
 }
 
-static void TestActiveClientKeepsAwakeAndDefersMdns(void) {
-  GrinderTcpDriverSim sim;
-  assert(sim.Start());
-  assert("" == sim.Connect());
-  assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
-  assert(FormatOk(true) == sim.Send("ON"));
-  sim.mdns_attempted = false;
-  sim.skip_sleep = 0;
-  sim.Loop();
-  assert(1 == sim.skip_sleep);
-  assert(!sim.mdns_attempted);
-  assert(FormatOk(false) == sim.Send("OFF"));
-  sim.Loop();
-  assert(!sim.mdns_attempted);
-  sim.DisconnectActive();
-  sim.Loop();
-  assert(sim.mdns_attempted);
-}
-
-static void TestMdnsRestartReAdvertises(void) {
-  GrinderTcpDriverSim sim;
-  assert(sim.Start());
-  sim.Loop();
-  assert(sim.advertised);
-  const uint32_t service_adds = sim.mdns_service_add_count;
-  sim.mdns_begun = false;
-  sim.mdns_attempted = false;
-  sim.Loop();
-  assert(sim.mdns_begun);
-  assert(sim.mdns_attempted);
-  assert(sim.advertised);
-  assert(service_adds + 1 == sim.mdns_service_add_count);
-}
-
-static void TestMdnsAddFailureRetries(void) {
-  GrinderTcpDriverSim sim;
-  assert(sim.Start());
-  sim.mdns_service_added = false;
-  sim.Loop();
-  assert(!sim.advertised);
-  sim.mdns_service_added = true;
-  sim.mdns_attempted = false;
-  sim.Loop();
-  assert(sim.mdns_attempted);
-  assert(sim.advertised);
-}
-
 static void TestByeClosesWithOff(void) {
   GrinderTcpDriverSim sim;
   assert(sim.Start());
@@ -701,21 +654,6 @@ static void TestPowerControlsClearedBeforeOn(void) {
   assert(sim.relay_on);
 }
 
-static void TestMdnsRefreshesPeriodicallyWhileIdle(void) {
-  GrinderTcpDriverSim sim;
-  assert(sim.Start());
-  sim.Loop();
-  const uint32_t service_adds = sim.mdns_service_add_count;
-  sim.Advance(kMdnsRefreshMs - 1);
-  sim.Loop();
-  assert(service_adds == sim.mdns_service_add_count);
-  sim.Advance(1);
-  sim.Loop();
-  assert(service_adds + 1 == sim.mdns_service_add_count);
-  assert(1 == sim.mdns_forced_refreshes);
-  assert(1 == sim.mdns_refresh_successes);
-}
-
 static void TestOnResponseWriteFailureTurnsOff(void) {
   GrinderTcpDriverSim sim;
   assert(sim.Start());
@@ -760,33 +698,6 @@ static void TestRestartDuringOnTurnsOff(void) {
   assert(!sim.authorized_on);
 }
 
-static void TestNetworkGenerationRestartsOnSameIpRoam(void) {
-  GrinderTcpDriverSim sim;
-  sim.NetworkUp("192.168.178.30", "10:20:30:40:50:60");
-  assert(1 == sim.network_generation);
-  assert(1 == sim.restart_count);
-  sim.NetworkUp("192.168.178.30", "10:20:30:40:50:60");
-  assert(1 == sim.network_generation);
-  assert(1 == sim.restart_count);
-  sim.NetworkUp("192.168.178.30", "10:20:30:40:50:61");
-  assert(2 == sim.network_generation);
-  assert(2 == sim.restart_count);
-}
-
-static void TestNetworkReconnectRestartsWithUnchangedIdentity(void) {
-  GrinderTcpDriverSim sim;
-  sim.NetworkUp("192.168.178.30", "10:20:30:40:50:60");
-  assert("" == sim.Connect());
-  assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
-  assert(FormatOk(true) == sim.Send("ON"));
-  sim.NetworkDown();
-  assert(!sim.relay_on);
-  sim.NetworkUp("192.168.178.30", "10:20:30:40:50:60");
-  assert(2 == sim.network_generation);
-  assert(2 == sim.restart_count);
-  assert(sim.server_started);
-}
-
 static void TestQuietDefaultsDisableNoisyServices(void) {
   GrinderTcpDriverSim sim;
   sim.ApplyQuietSettings();
@@ -810,17 +721,6 @@ static void TestQuietDefaultsDisableNoisyServices(void) {
   assert(0 == sim.udp_disconnect_count);
 }
 
-static void TestAuthenticatedClientKeepsWifiAwakeWhileIdle(void) {
-  GrinderTcpDriverSim sim;
-  assert(sim.Start());
-  assert("" == sim.Connect());
-  assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
-  sim.skip_sleep = 0;
-  sim.Loop();
-  assert(1 == sim.skip_sleep);
-  assert(!sim.relay_on);
-}
-
 static void TestQuietDefaultsAreNotRewrittenInLoop(void) {
   GrinderTcpDriverSim sim;
   sim.mqtt_enabled = true;
@@ -834,8 +734,12 @@ static void TestQuietDefaultsAreNotRewrittenInLoop(void) {
   assert(sim.rules_enabled);
 }
 
+#include "grinder_tcp_recovery_sim_tests.h"
+
 int main(void) {
   TestFirstConnectionAndBusy();
+  TestHundredSequentialSessions();
+  TestRepeatedBusyDoesNotDisplaceActiveClient();
   TestBusyClientCannotControlRelay();
   TestExternalOnBlockedBeforeHello();
   TestExternalOnBlockedAfterHello();
@@ -846,6 +750,7 @@ int main(void) {
   TestDeferredByeClose();
   TestDisconnectTurnsOff();
   TestHeartbeatTimeoutTurnsOff();
+  TestReconnectImmediatelyAfterHeartbeatTimeout();
   TestHelloTimeoutTurnsOff();
   TestOnRemainsUntilOff();
   TestDuplicateOffIsIdempotent();

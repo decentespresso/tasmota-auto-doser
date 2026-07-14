@@ -657,12 +657,10 @@ void GrinderTcpStart(void) {
 
 void GrinderTcpStopClosingClients(void) {
   for (uint32_t i = 0; i < GRINDER_TCP_BUSY_CLOSE_SLOTS; i++) {
-    if (GrinderTcp.closing[i].open) {
-      GrinderTcp.closing[i].client.stop();
-      GrinderTcp.closing[i].open = false;
-      GrinderTcp.closing[i].close_at = 0;
-      GrinderTcpResetTx(GrinderTcp.closing[i].tx);
-    }
+    GrinderTcp.closing[i].client.stop();
+    GrinderTcp.closing[i].open = false;
+    GrinderTcp.closing[i].close_at = 0;
+    GrinderTcpResetTx(GrinderTcp.closing[i].tx);
   }
 }
 

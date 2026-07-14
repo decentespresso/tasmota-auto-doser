@@ -2,7 +2,8 @@ param(
   [string]$Ip = '192.168.178.30',
   [int]$Port = 31980,
   [string]$ExpectedMac = '1C:69:20:0B:54:20',
-  [string]$ScaleMac = 'AA:BB:CC:11:22:33'
+  [string]$ScaleMac = 'AA:BB:CC:11:22:33',
+  [int]$Cycles = 100
 )
 
 $ErrorActionPreference = 'Stop'
@@ -253,6 +254,109 @@ function Test-HeartbeatTimeout() {
   }
 }
 
+function Test-RepeatedSessions() {
+  $passed = 0
+  for ($i = 0; $i -lt $Cycles; $i++) {
+    $conn = $null
+    try {
+      $conn = New-GrinderClient
+      $hello = Send-GrinderCommand $conn "HELLO $ScaleMac"
+      $ping = Send-GrinderCommand $conn 'PING'
+      $bye = Send-GrinderCommand $conn 'BYE'
+      if ((Is-OkState $hello 'OFF') -and (Is-OkState $ping 'OFF') -and (Is-OkState $bye 'OFF')) {
+        $passed++
+      }
+    } finally {
+      Close-GrinderClient $conn
+    }
+    Start-Sleep -Milliseconds 275
+  }
+  Add-Result "$Cycles sequential sessions" ($passed -eq $Cycles) "passed=$passed"
+}
+
+function Test-RepeatedBusy() {
+  $active = $null
+  $passed = 0
+  try {
+    $active = New-GrinderClient
+    $hello = Send-GrinderCommand $active "HELLO $ScaleMac"
+    for ($i = 0; $i -lt 20; $i++) {
+      $busy = $null
+      try {
+        $busy = New-GrinderClient
+        if ($busy.Reader.ReadLine() -eq "BUSY $ExpectedMac") {
+          $passed++
+        }
+      } finally {
+        Close-GrinderClient $busy
+      }
+      Start-Sleep -Milliseconds 275
+    }
+    $bye = Send-GrinderCommand $active 'BYE'
+    $ok = (Is-OkState $hello 'OFF') -and (Is-OkState $bye 'OFF') -and ($passed -eq 20)
+    Add-Result 'Repeated BUSY clients recover' $ok "passed=$passed"
+  } finally {
+    Close-GrinderClient $active
+  }
+}
+
+function Test-NoHelloTimeout() {
+  $silent = $null
+  $reconnect = $null
+  try {
+    $silent = New-GrinderClient
+    Start-Sleep -Milliseconds 1250
+    Close-GrinderClient $silent
+    $silent = $null
+    $reconnect = New-GrinderClient
+    $hello = Send-GrinderCommand $reconnect "HELLO $ScaleMac"
+    $bye = Send-GrinderCommand $reconnect 'BYE'
+    $power = Get-PowerState
+    $pass = (Is-OkState $hello 'OFF') -and (Is-OkState $bye 'OFF') -and ($power -eq 'OFF')
+    Add-Result 'HELLO timeout releases client slot' $pass "hello=$hello bye=$bye Power1=$power"
+  } finally {
+    Close-GrinderClient $reconnect
+    Close-GrinderClient $silent
+  }
+}
+
+function Test-ReconnectAfterHeartbeat() {
+  $stale = $null
+  $reconnect = $null
+  try {
+    $stale = New-GrinderClient
+    $hello = Send-GrinderCommand $stale "HELLO $ScaleMac"
+    Start-Sleep -Milliseconds 2200
+    Close-GrinderClient $stale
+    $stale = $null
+    $reconnect = New-GrinderClient
+    $nextHello = Send-GrinderCommand $reconnect "HELLO $ScaleMac"
+    $bye = Send-GrinderCommand $reconnect 'BYE'
+    $pass = (Is-OkState $hello 'OFF') -and (Is-OkState $nextHello 'OFF') -and (Is-OkState $bye 'OFF')
+    Add-Result 'Immediate reconnect after heartbeat timeout' $pass "hello=$nextHello bye=$bye"
+  } finally {
+    Close-GrinderClient $reconnect
+    Close-GrinderClient $stale
+  }
+}
+
+function Test-ControlledRestart() {
+  Set-RelayOff
+  $response = Invoke-TasmotaCommand 'GrinderRestart'
+  Start-Sleep -Milliseconds 250
+  $status = $response.GrinderStatus
+  $power = Get-PowerState
+  $pass = ($null -ne $status) -and ([bool]$status.TCP.Listen) -and ($power -eq 'OFF')
+  Add-Result 'Controlled service restart stays OFF' $pass "serverGeneration=$($status.TCP.Gen) Power1=$power"
+}
+
+function Test-Diagnostics() {
+  $status = (Invoke-TasmotaCommand 'GrinderStatus').GrinderStatus
+  $pass = ($null -ne $status.Net) -and ($null -ne $status.TCP) -and ($null -ne $status.mDNS) -and ($null -ne $status.Relay) -and ($null -ne $status.Heap) -and ($null -ne $status.Last) -and ($null -ne $status.Count)
+  $pass = $pass -and ($null -ne $status.Net.BSSID) -and ($null -ne $status.Net.Gen) -and ($null -ne $status.Count.Restart) -and ($null -ne $status.Count.MdnsRefresh)
+  Add-Result 'GrinderStatus schema and counters' $pass "networkGeneration=$($status.Net.Gen) restarts=$($status.Count.Restart) minHeap=$($status.Heap.Min)"
+}
+
 try {
   Test-InitialState
   Test-HttpOnBlocked
@@ -264,6 +368,12 @@ try {
   Test-ByeWhileOn
   Test-DroppedClient
   Test-HeartbeatTimeout
+  Test-NoHelloTimeout
+  Test-ReconnectAfterHeartbeat
+  Test-RepeatedBusy
+  Test-RepeatedSessions
+  Test-ControlledRestart
+  Test-Diagnostics
 } finally {
   Set-RelayOff
 }

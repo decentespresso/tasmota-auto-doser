@@ -73,6 +73,14 @@ At startup and before each TCP `ON`, the firmware clears `PowerLock1`, `PulseTim
 
 The firmware applies quiet defaults for grinder use: MQTT publish/control, Home Assistant discovery, timers, rules, emulation, device groups, MI32 BLE, Matter, Wizmote, and Berry autoexec are disabled. mDNS is enabled. These are persistent Tasmota settings, so do not flash this profile onto a plug that should still be a general automation device.
 
+Grinder builds also enforce mains-powered network behavior:
+
+- `DeepSleepTime 0`: deep-sleep support is excluded from the build and any persisted deep-sleep interval is cleared.
+- `SetOption127 1`: Wi-Fi power saving is disabled.
+- `SetOption57 0`: the periodic 44-minute alternate-AP rescan is disabled.
+
+An authenticated TCP client keeps the main loop awake even while `Power1` is off. Existing installations are migrated once when a persisted value differs; the main loop does not write these settings repeatedly.
+
 ## TCP Protocol
 
 Clients connect to port `31980`. Commands are ASCII lines ending in `\n` or `\r\n`.
@@ -209,6 +217,30 @@ proto=1
 
 Multiple plugs share the service type. Their mDNS instance names are unique through the Tasmota hostname, and the scale must select by MAC.
 
+## Network Recovery
+
+The driver treats connection state, local IPv4 address, and BSSID as one network identity. A Wi-Fi reconnect, IP change, or BSSID change increments the network generation and invalidates the active client, listener, and mDNS service. This includes a roam where the DHCP address remains unchanged.
+
+Every controlled listener restart forces `Power1 OFF`, revokes TCP ownership, closes active and pending `BUSY` clients, stops the old socket, removes the mDNS service, recreates port `31980`, restores `TCP_NODELAY`, and advertises protocol version `1` again. The `server_started` state records intent only; it does not prevent recreation after a network generation changes.
+
+Network callbacks recover immediately after Tasmota reports usable connectivity. A five-second identity check catches missed roam notifications, so an IP or BSSID change is detected within five seconds. mDNS registration is attempted when the listener starts and retried every five seconds after failure. While the relay is off and no authenticated client is active, the service is removed and re-added every 60 seconds. Maintenance never interrupts an authenticated grinder connection.
+
+`GrinderRestart` runs the same fail-safe TCP and mDNS recreation path without rebooting the plug. It is intended for field diagnosis when the Web UI works but port `31980` does not.
+
+`GrinderStatus` returns one JSON object with these groups:
+
+| Group | Contents |
+| --- | --- |
+| `Net` | connectivity, IP, subnet mask, gateway, BSSID, RSSI, network generation |
+| `TCP` | listener intent, server generation, client state, HELLO state, closing state, peer address, last receive age |
+| `mDNS` | advertisement and responder state |
+| `Relay` | TCP ownership and physical relay state |
+| `Heap` | current and minimum observed free heap |
+| `Last` | last event, network-change reason, close reason, and fail-safe OFF reason |
+| `Count` | network, listener, client, timeout, protocol, and mDNS counters |
+
+For a same-IP failure, compare `Net.BSSID`, `Net.Gen`, `Last.Net`, `Count.BSSID`, `Count.Restart`, and `TCP.Gen`. A changed BSSID with the same `Net.IP` should still advance both generations.
+
 ## HDS Troubleshooting
 
 If `Select Plug` finds nothing, check mDNS from another machine:
@@ -283,3 +315,20 @@ Expected coverage:
 - first TCP client wins and second receives `BUSY`
 - `ON`, `OFF`, `!`, `STATE`, duplicate `OFF`, and `BYE` return expected responses
 - dropped client and missed heartbeat force `Power1 OFF`
+- 100 sequential `HELLO`, `PING`, and `BYE` sessions recover cleanly
+- silent pre-HELLO and missed-heartbeat clients release the active slot
+- repeated second clients receive `BUSY` without exhausting closing slots
+- `GrinderRestart` recreates the service while keeping the relay off
+- `GrinderStatus` exposes the required schema and counters
+
+The smoke test must run first with the grinder disconnected or with a harmless load. The mDNS probe should be repeated after `GrinderRestart` and after each controlled Wi-Fi or AP transition.
+
+## Soak Test
+
+Run the logger for 8 to 12 hours with the grinder disconnected or a harmless load:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/grinder_soak_test.ps1 -Ip 192.168.178.30 -ExpectedMac 1C:69:20:0B:54:20 -DurationHours 12 -Output grinder-soak.csv
+```
+
+The logger performs repeated TCP sessions, runs periodic mDNS discovery, and records IP, BSSID, RSSI, network and server generations, restart and refresh counters, relay state, free heap, and minimum free heap. During the run, perform at least one controlled AP disconnect, reboot, or roam. Acceptance requires continuous `Power1 OFF` outside authenticated `ON`, TCP recovery within five seconds after usable Wi-Fi returns, mDNS recovery within the five-second retry window, no permanent `BUSY`, and no declining free-heap trend.
