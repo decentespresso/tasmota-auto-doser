@@ -11,6 +11,7 @@ static const uint32_t kHeartbeatTimeoutMs = 2000;
 static const uint32_t kHelloTimeoutMs = 1000;
 static const uint32_t kCloseGraceMs = 250;
 static const uint32_t kTxTimeoutMs = 250;
+static const uint32_t kMdnsRefreshMs = 60000;
 
 static std::string FormatOk(const bool relay_on) {
   char output[64];
@@ -79,6 +80,9 @@ struct GrinderTcpDriverSim {
   uint32_t normal_power_path_count = 0;
   uint32_t mdns_service_add_count = 0;
   uint32_t mdns_txt_add_count = 0;
+  uint32_t mdns_refresh_at = 0;
+  uint32_t mdns_forced_refreshes = 0;
+  uint32_t mdns_refresh_successes = 0;
   bool fake_power_driver_enabled = false;
   bool tcp_power_command = false;
   bool response_write_succeeds = true;
@@ -194,16 +198,23 @@ struct GrinderTcpDriverSim {
     }
   }
 
-  void Advertise(void) {
+  void Advertise(const bool force = false) {
     EnsureMdns();
-    if (!mdns_begun || advertised) {
+    if (!mdns_begun || (advertised && !force)) {
       return;
+    }
+    if (force) {
+      mdns_forced_refreshes++;
     }
     mdns_attempted = true;
     mdns_service_add_count++;
     mdns_txt_add_count++;
     if (mdns_service_added && mdns_txt_added) {
       advertised = true;
+      mdns_refresh_at = now + kMdnsRefreshMs;
+      if (force) {
+        mdns_refresh_successes++;
+      }
     }
   }
 
@@ -215,8 +226,9 @@ struct GrinderTcpDriverSim {
     }
     EnforceOwnership();
     KeepAwakeWhileConnected();
-    if (server_started && !relay_on) {
-      Advertise();
+    const bool authenticated = connected && greeted && !close_pending;
+    if (server_started && !relay_on && !authenticated) {
+      Advertise(advertised && (now >= mdns_refresh_at));
     }
   }
 
@@ -565,7 +577,7 @@ static void TestEmergencyOffAlias(void) {
   assert(!sim.authorized_on);
 }
 
-static void TestLoopKeepsAwakeAndSkipsMdnsWhileGrinding(void) {
+static void TestActiveClientKeepsAwakeAndDefersMdns(void) {
   GrinderTcpDriverSim sim;
   assert(sim.Start());
   assert("" == sim.Connect());
@@ -577,6 +589,9 @@ static void TestLoopKeepsAwakeAndSkipsMdnsWhileGrinding(void) {
   assert(1 == sim.skip_sleep);
   assert(!sim.mdns_attempted);
   assert(FormatOk(false) == sim.Send("OFF"));
+  sim.Loop();
+  assert(!sim.mdns_attempted);
+  sim.DisconnectActive();
   sim.Loop();
   assert(sim.mdns_attempted);
 }
@@ -684,6 +699,21 @@ static void TestPowerControlsClearedBeforeOn(void) {
   assert(!sim.power_locked);
   assert(0 == sim.pulse_timer);
   assert(sim.relay_on);
+}
+
+static void TestMdnsRefreshesPeriodicallyWhileIdle(void) {
+  GrinderTcpDriverSim sim;
+  assert(sim.Start());
+  sim.Loop();
+  const uint32_t service_adds = sim.mdns_service_add_count;
+  sim.Advance(kMdnsRefreshMs - 1);
+  sim.Loop();
+  assert(service_adds == sim.mdns_service_add_count);
+  sim.Advance(1);
+  sim.Loop();
+  assert(service_adds + 1 == sim.mdns_service_add_count);
+  assert(1 == sim.mdns_forced_refreshes);
+  assert(1 == sim.mdns_refresh_successes);
 }
 
 static void TestOnResponseWriteFailureTurnsOff(void) {
@@ -821,9 +851,10 @@ int main(void) {
   TestDuplicateOffIsIdempotent();
   TestFastOffBeforeGenericSync();
   TestEmergencyOffAlias();
-  TestLoopKeepsAwakeAndSkipsMdnsWhileGrinding();
+  TestActiveClientKeepsAwakeAndDefersMdns();
   TestMdnsRestartReAdvertises();
   TestMdnsAddFailureRetries();
+  TestMdnsRefreshesPeriodicallyWhileIdle();
   TestByeClosesWithOff();
   TestBadCommandClosesWithOff();
   TestDuplicateHelloClosesWithOff();

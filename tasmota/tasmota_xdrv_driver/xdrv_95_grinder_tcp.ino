@@ -62,6 +62,10 @@
 #define GRINDER_TCP_MDNS_RETRY 5000
 #endif
 
+#ifndef GRINDER_TCP_MDNS_REFRESH
+#define GRINDER_TCP_MDNS_REFRESH 60000
+#endif
+
 #ifndef GRINDER_TCP_MAX_BYTES_PER_LOOP
 #define GRINDER_TCP_MAX_BYTES_PER_LOOP 256
 #endif
@@ -110,6 +114,7 @@ struct {
   uint32_t last_rx = 0;
   uint32_t close_at = 0;
   uint32_t mdns_retry_at = 0;
+  uint32_t mdns_refresh_at = 0;
   char plug_mac[18] = { 0 };
   bool server_started = false;
   bool client_open = false;
@@ -120,9 +125,12 @@ struct {
   bool tcp_power_command = false;
 } GrinderTcp;
 
-#include "tasmota_xdrv_driver/xdrv_95_grinder_tcp_diagnostics.h"
+void GrinderTcpRestartServer(const char *reason);
+void GrinderTcpStop(const char *reason);
+void GrinderTcpCheckNetwork(void);
+void GrinderTcpAdvertise(const bool force = false);
 
-void GrinderTcpAdvertise(void);
+#include "tasmota_xdrv_driver/xdrv_95_grinder_tcp_diagnostics.h"
 
 void GrinderTcpApplyQuietSettings(void) {
   const bool corrected = Settings->deepsleep || !Settings->flag5.wifi_no_sleep || Settings->flag3.use_wifi_rescan;
@@ -591,6 +599,7 @@ void GrinderTcpKeepAwakeWhileConnected(void) {
 
 void GrinderTcpLoop(void) {
   GrinderTcpObserveDiagnostics();
+  GrinderTcpCheckNetwork();
   GrinderTcpFinishActiveClose();
   GrinderTcpFinishClosingClients();
   GrinderTcpFlushActiveTx();
@@ -604,93 +613,20 @@ void GrinderTcpLoop(void) {
   GrinderTcpEnforceRelayOwnership();
   GrinderTcpKeepAwakeWhileConnected();
   GrinderTcpPollServer();
-  if (GrinderTcp.server_started && !GrinderTcpRelayStateOn()) {
+  const bool authenticated = GrinderTcp.client_open && GrinderTcp.greeted && !GrinderTcp.close_pending;
+  if (GrinderTcp.server_started && !GrinderTcpRelayStateOn() && !authenticated) {
     if (!Mdns.begun) {
       GrinderTcp.advertised = false;
+      GrinderTcp.mdns_refresh_at = 0;
     }
-    GrinderTcpAdvertise();
+    const bool refresh = GrinderTcp.advertised && TimeReached(GrinderTcp.mdns_refresh_at);
+    if (!GrinderTcp.advertised || refresh) {
+      GrinderTcpAdvertise(refresh);
+    }
   }
 }
 
-void GrinderTcpEnsureMdns(void) {
-  Settings->flag3.mdns_enabled = 1;
-  const bool was_begun = Mdns.begun;
-  if (!Mdns.begun) {
-    StartMdns();
-  }
-  if (!was_begun && Mdns.begun) {
-    GrinderTcp.advertised = false;
-  }
-#if defined(USE_WEBSERVER) && defined(WEBSERVER_ADVERTISE)
-  if ((1 == Mdns.begun) && Settings->webserver) {
-    MdnsAddServiceHttp();
-  }
-#endif
-}
-
-bool GrinderTcpWriteMdnsTxt(char *service, char *proto, char *key_mac, char *key_name, char *key_model, char *key_proto, char *model, char *proto_version) {
-  return MDNS.addServiceTxt(service, proto, key_mac, GrinderTcp.plug_mac) &&
-         MDNS.addServiceTxt(service, proto, key_name, NetworkHostname()) &&
-         MDNS.addServiceTxt(service, proto, key_model, model) &&
-         MDNS.addServiceTxt(service, proto, key_proto, proto_version);
-}
-
-void GrinderTcpRemoveMdnsService(void) {
-#ifdef ESP32
-  if (Mdns.begun) {
-    mdns_service_remove("_grinderplug", "_tcp");
-  }
-#endif
-  GrinderTcp.advertised = false;
-}
-
-void GrinderTcpAdvertise(void) {
-  if (!TimeReached(GrinderTcp.mdns_retry_at)) {
-    return;
-  }
-  GrinderTcp.mdns_retry_at = millis() + GRINDER_TCP_MDNS_RETRY;
-  GrinderTcpEnsureMdns();
-  if (!Mdns.begun) {
-    GrinderTcpDiag.mdns_responder_unavailable++;
-    return;
-  }
-  if (GrinderTcp.advertised) {
-    return;
-  }
-  GrinderTcpRemoveMdnsService();
-  char service[] = "grinderplug";
-  char proto[] = "tcp";
-  char key_mac[] = "mac";
-  char key_name[] = "name";
-  char key_model[] = "model";
-  char key_proto[] = "proto";
-  char model[] = GRINDER_TCP_MODEL;
-  char proto_version[] = "1";
-  const bool service_added = MDNS.addService(service, proto, GRINDER_TCP_PORT);
-  const bool txt_added = GrinderTcpWriteMdnsTxt(service, proto, key_mac, key_name, key_model, key_proto, model, proto_version);
-  GrinderTcpDiag.mdns_attempts++;
-  if (!service_added) {
-    GrinderTcpDiag.mdns_service_failures++;
-  }
-  if (!txt_added) {
-    GrinderTcpDiag.mdns_txt_failures++;
-  }
-  AddLog(LOG_LEVEL_INFO,
-         PSTR("GTC: mDNS service %u txt %u host %s mac %s port %u"),
-         service_added,
-         txt_added,
-         NetworkHostname(),
-         GrinderTcp.plug_mac,
-         GRINDER_TCP_PORT);
-  if (service_added && txt_added) {
-    GrinderTcp.advertised = true;
-    GrinderTcpDiag.mdns_successes++;
-    GrinderTcpRecordEvent("mdns_registered");
-  } else {
-    GrinderTcpDiag.mdns_failures++;
-    GrinderTcpRecordEvent("mdns_failed");
-  }
-}
+#include "tasmota_xdrv_driver/xdrv_95_grinder_tcp_recovery.h"
 
 void GrinderTcpStart(void) {
   if (!GrinderTcpCacheIdentity()) {
@@ -714,6 +650,7 @@ void GrinderTcpStart(void) {
   GrinderTcpDiag.server_generation++;
   GrinderTcpRecordEvent("server_started");
   GrinderTcp.mdns_retry_at = 0;
+  GrinderTcp.mdns_refresh_at = 0;
   GrinderTcpAdvertise();
   AddLogServerActive(PSTR("Grinder TCP"));
 }
@@ -741,6 +678,7 @@ void GrinderTcpStop(const char *reason) {
     GrinderTcpRecordEvent("server_stopped");
   }
   GrinderTcpRemoveMdnsService();
+  GrinderTcp.mdns_refresh_at = 0;
 }
 
 void GrinderTcpRestartServer(const char *reason) {
