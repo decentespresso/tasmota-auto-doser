@@ -84,19 +84,17 @@ static void TestMdnsAddFailureRetries(void) {
   assert(sim.advertised);
 }
 
-static void TestMdnsRefreshesPeriodicallyWhileIdle(void) {
+static void TestMdnsDoesNotRefreshPeriodicallyWhileIdle(void) {
   GrinderTcpDriverSim sim;
   assert(sim.Start());
   sim.Loop();
   const uint32_t service_adds = sim.mdns_service_add_count;
-  sim.Advance(kMdnsRefreshMs - 1);
+  sim.Advance(kOldMdnsRefreshMs);
   sim.Loop();
   assert(service_adds == sim.mdns_service_add_count);
-  sim.Advance(1);
+  sim.Advance(kOldMdnsRefreshMs * 9);
   sim.Loop();
-  assert(service_adds + 1 == sim.mdns_service_add_count);
-  assert(1 == sim.mdns_forced_refreshes);
-  assert(1 == sim.mdns_refresh_successes);
+  assert(service_adds == sim.mdns_service_add_count);
 }
 
 static void TestNetworkGenerationRestartsOnSameIpRoam(void) {
