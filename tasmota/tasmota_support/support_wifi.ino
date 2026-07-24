@@ -838,7 +838,10 @@ void WifiProcessEvents(void) {
       WifiEventState.last_disconnect_reason = disconnect_reason;
     }
 #ifdef USE_WEBSERVER
-    StopWebserver();
+    if ((WIFI_MANAGER != Wifi.config_type) &&
+        (WIFI_MANAGER_RESET_ONLY != Wifi.config_type)) {
+      StopWebserver();
+    }
 #endif
     WifiSetState(0);
   }

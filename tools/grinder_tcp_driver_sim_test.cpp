@@ -729,6 +729,7 @@ static void TestQuietDefaultsAreNotRewrittenInLoop(void) {
 int main(void) {
   TestWifiEventInterleavingCannotStrandWebserver();
   TestStandaloneSameIpEventKeepsActiveDose();
+  TestWifiManagerSurvivesStationDisconnect();
   TestLostIpPreservesDisconnectDiagnostics();
   TestFirstConnectionAndBusy();
   TestHundredSequentialSessions();

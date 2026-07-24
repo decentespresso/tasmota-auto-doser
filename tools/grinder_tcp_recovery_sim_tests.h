@@ -23,6 +23,7 @@ struct WifiEventBridgeSim {
   uint8_t reason = 0;
   bool outage_active = false;
   bool callback_outage_active = false;
+  bool manager_active = false;
   bool web_started = true;
   bool session_active = true;
   bool relay_on = true;
@@ -81,7 +82,9 @@ struct WifiEventBridgeSim {
       } else if (!reason && snapshot.disconnected) {
         reason = snapshot.reason;
       }
-      web_started = false;
+      if (!manager_active) {
+        web_started = false;
+      }
       session_active = false;
       relay_on = false;
     }
@@ -128,6 +131,16 @@ static void TestStandaloneSameIpEventKeepsActiveDose(void) {
   assert(sim.session_active);
   assert(sim.relay_on);
   assert(0 == sim.generation);
+}
+
+static void TestWifiManagerSurvivesStationDisconnect(void) {
+  WifiEventBridgeSim sim;
+  sim.manager_active = true;
+  sim.Disconnect(7);
+  sim.Apply(sim.Take(), false);
+  assert(sim.web_started);
+  assert(!sim.session_active);
+  assert(!sim.relay_on);
 }
 
 static void TestLostIpPreservesDisconnectDiagnostics(void) {
