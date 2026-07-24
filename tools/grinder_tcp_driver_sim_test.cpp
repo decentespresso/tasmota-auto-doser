@@ -51,6 +51,7 @@ struct GrinderTcpDriverSim {
   bool advertised = false;
   bool mdns_attempted = false;
   bool mdns_begun = true;
+  bool mdns_interface_enabled = true;
   bool mdns_service_added = true;
   bool mdns_txt_added = true;
   bool mqtt_enabled = true;
@@ -81,6 +82,7 @@ struct GrinderTcpDriverSim {
   uint32_t mdns_service_add_count = 0;
   uint32_t mdns_txt_add_count = 0;
   uint32_t mdns_end_count = 0;
+  uint32_t mdns_interface_enable_count = 0;
   bool fake_power_driver_enabled = false;
   bool tcp_power_command = false;
   bool response_write_succeeds = true;
@@ -191,6 +193,10 @@ struct GrinderTcpDriverSim {
     if (!mdns_begun) {
       mdns_begun = true;
     }
+    if (mdns_begun) {
+      mdns_interface_enabled = true;
+      mdns_interface_enable_count++;
+    }
     if (!was_begun && mdns_begun) {
       advertised = false;
     }
@@ -204,7 +210,7 @@ struct GrinderTcpDriverSim {
     mdns_attempted = true;
     mdns_service_add_count++;
     mdns_txt_add_count++;
-    if (mdns_service_added && mdns_txt_added) {
+    if (mdns_interface_enabled && mdns_service_added && mdns_txt_added) {
       advertised = true;
     }
   }
@@ -341,6 +347,7 @@ struct GrinderTcpDriverSim {
     DisconnectActive();
     server_started = false;
     advertised = false;
+    mdns_interface_enabled = false;
     if (mdns_begun) {
       mdns_begun = false;
       mdns_end_count++;

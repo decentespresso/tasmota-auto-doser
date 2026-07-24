@@ -85,6 +85,7 @@ def main():
     assert "WifiEventState.last_disconnect_reason" in process
     assert "MDNS.end();" in RECOVERY
     assert "Mdns.begun = 0;" in RECOVERY
+    assert "WifiMDNSAfterReconnectv4();" in RECOVERY
     mark_down = RECOVERY[RECOVERY.index("void GrinderTcpMarkNetworkDown"):RECOVERY.index("void GrinderTcpEnsureMdns")]
     assert "GrinderTcpResetMdnsResponder();" in mark_down
     assert "WiFi.onEvent(GrinderTcpWifiEvent)" not in RECOVERY

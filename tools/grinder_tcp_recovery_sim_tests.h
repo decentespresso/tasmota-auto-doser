@@ -284,6 +284,7 @@ static void TestNetworkReconnectRestartsWithUnchangedIdentity(void) {
   sim.NetworkDown();
   assert(!sim.relay_on);
   assert(!sim.mdns_begun);
+  assert(!sim.mdns_interface_enabled);
   assert(!sim.advertised);
   assert(1 == sim.mdns_end_count);
   sim.NetworkUp("192.168.178.30", "10:20:30:40:50:60");
@@ -292,7 +293,9 @@ static void TestNetworkReconnectRestartsWithUnchangedIdentity(void) {
   assert(2 == sim.restart_count);
   assert(sim.server_started);
   assert(sim.mdns_begun);
+  assert(sim.mdns_interface_enabled);
   assert(sim.advertised);
+  assert(sim.mdns_interface_enable_count >= 2);
   assert(service_adds + 1 == sim.mdns_service_add_count);
 }
 

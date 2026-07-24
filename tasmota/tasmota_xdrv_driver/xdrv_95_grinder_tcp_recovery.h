@@ -28,6 +28,9 @@ void GrinderTcpEnsureMdns(void) {
   if (!Mdns.begun) {
     StartMdns();
   }
+  if (Mdns.begun && GrinderTcpNetworkUsable()) {
+    WifiMDNSAfterReconnectv4();
+  }
   if (!was_begun && Mdns.begun) {
     GrinderTcp.advertised = false;
   }
