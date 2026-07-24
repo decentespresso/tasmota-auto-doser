@@ -144,11 +144,9 @@ while ([DateTime]::UtcNow -lt $deadline) {
     WifiDisconnectEvents = $status.Count.WiFiDn
     WifiGotIpEvents = $status.Count.GotIP
     Restarts = $status.Count.Restart
-    MdnsRefreshes = $status.Count.MdnsRefresh
+    MdnsFailures = $status.Count.MdnsFail
     MaxMdnsOperationMs = $status.mDNS.MaxMs
     MaxLoopGapMs = $status.Loop.MaxGapMs
-    LastWifiEvent = $status.Last.WiFi
-    LastWifiEventAgeMs = $status.Last.WiFiAge
     LastNetworkReason = $status.Last.Net
     FreeHeap = $status.Heap.Free
     MinimumHeap = $status.Heap.Min

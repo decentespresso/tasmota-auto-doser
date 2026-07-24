@@ -727,6 +727,9 @@ static void TestQuietDefaultsAreNotRewrittenInLoop(void) {
 #include "grinder_tcp_recovery_sim_tests.h"
 
 int main(void) {
+  TestWifiEventInterleavingCannotStrandWebserver();
+  TestStandaloneSameIpEventKeepsActiveDose();
+  TestLostIpPreservesDisconnectDiagnostics();
   TestFirstConnectionAndBusy();
   TestHundredSequentialSessions();
   TestRepeatedBusyDoesNotDisplaceActiveClient();

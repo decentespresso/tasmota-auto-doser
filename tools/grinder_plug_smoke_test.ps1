@@ -354,7 +354,7 @@ function Test-Diagnostics() {
   $status = (Invoke-TasmotaCommand 'GrinderStatus').GrinderStatus
   $pass = ($null -ne $status.Net) -and ($null -ne $status.TCP) -and ($null -ne $status.mDNS) -and ($null -ne $status.Relay) -and ($null -ne $status.Heap) -and ($null -ne $status.Last) -and ($null -ne $status.Count)
   $pass = $pass -and ($null -ne $status.Net.BSSID) -and ($null -ne $status.Net.Gen) -and ($null -ne $status.Net.Reason) -and ($null -ne $status.Net.RecoveryMs)
-  $pass = $pass -and ($null -ne $status.Count.Restart) -and ($null -ne $status.Count.MdnsRefresh) -and ($null -ne $status.Count.LostIP)
+  $pass = $pass -and ($null -ne $status.Count.Restart) -and ($null -ne $status.Count.MdnsFail) -and ($null -ne $status.Count.LostIP)
   $pass = $pass -and ($null -ne $status.Loop.MaxGapMs) -and ($null -ne $status.mDNS.MaxMs)
   Add-Result 'GrinderStatus schema and counters' $pass "networkGeneration=$($status.Net.Gen) restarts=$($status.Count.Restart) minHeap=$($status.Heap.Min)"
 }
