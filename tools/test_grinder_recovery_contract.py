@@ -83,6 +83,10 @@ def main():
     assert "WebserverStartSocket();" not in process
     assert "WifiEventState.outage_active" in process
     assert "WifiEventState.last_disconnect_reason" in process
+    assert "MDNS.end();" in RECOVERY
+    assert "Mdns.begun = 0;" in RECOVERY
+    mark_down = RECOVERY[RECOVERY.index("void GrinderTcpMarkNetworkDown"):RECOVERY.index("void GrinderTcpEnsureMdns")]
+    assert "GrinderTcpResetMdnsResponder();" in mark_down
     assert "WiFi.onEvent(GrinderTcpWifiEvent)" not in RECOVERY
     assert "(WL_CONNECTED == WiFi.status()) && WifiHasIPv4()" in RECOVERY
     assert "WifiLinkCount()" in RECOVERY

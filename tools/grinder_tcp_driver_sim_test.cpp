@@ -80,6 +80,7 @@ struct GrinderTcpDriverSim {
   uint32_t normal_power_path_count = 0;
   uint32_t mdns_service_add_count = 0;
   uint32_t mdns_txt_add_count = 0;
+  uint32_t mdns_end_count = 0;
   bool fake_power_driver_enabled = false;
   bool tcp_power_command = false;
   bool response_write_succeeds = true;
@@ -339,6 +340,11 @@ struct GrinderTcpDriverSim {
     network_connected = false;
     DisconnectActive();
     server_started = false;
+    advertised = false;
+    if (mdns_begun) {
+      mdns_begun = false;
+      mdns_end_count++;
+    }
   }
 
   std::string Reply(const std::string &response) {

@@ -275,15 +275,25 @@ static void TestNetworkGenerationRestartsOnSameIpRoam(void) {
 static void TestNetworkReconnectRestartsWithUnchangedIdentity(void) {
   GrinderTcpDriverSim sim;
   sim.NetworkUp("192.168.178.30", "10:20:30:40:50:60");
+  sim.Loop();
+  assert(sim.advertised);
+  const uint32_t service_adds = sim.mdns_service_add_count;
   assert("" == sim.Connect());
   assert(FormatOk(false) == sim.Send("HELLO 10:20:30:40:50:60"));
   assert(FormatOk(true) == sim.Send("ON"));
   sim.NetworkDown();
   assert(!sim.relay_on);
+  assert(!sim.mdns_begun);
+  assert(!sim.advertised);
+  assert(1 == sim.mdns_end_count);
   sim.NetworkUp("192.168.178.30", "10:20:30:40:50:60");
+  sim.Loop();
   assert(2 == sim.network_generation);
   assert(2 == sim.restart_count);
   assert(sim.server_started);
+  assert(sim.mdns_begun);
+  assert(sim.advertised);
+  assert(service_adds + 1 == sim.mdns_service_add_count);
 }
 
 static void TestAuthenticatedClientKeepsWifiAwakeWhileIdle(void) {

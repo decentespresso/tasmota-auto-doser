@@ -2,6 +2,14 @@ bool GrinderTcpNetworkUsable(void) {
   return (WL_CONNECTED == WiFi.status()) && WifiHasIPv4();
 }
 
+void GrinderTcpResetMdnsResponder(void) {
+  if (Mdns.begun) {
+    MDNS.end();
+    Mdns.begun = 0;
+  }
+  GrinderTcp.advertised = false;
+}
+
 void GrinderTcpMarkNetworkDown(const char *reason) {
   if (GrinderTcpDiag.network_connected) {
     GrinderTcpDiag.network_down++;
@@ -11,6 +19,7 @@ void GrinderTcpMarkNetworkDown(const char *reason) {
   if (GrinderTcp.server_started || GrinderTcp.client_open || GrinderTcpRelayStateOn()) {
     GrinderTcpStop(reason);
   }
+  GrinderTcpResetMdnsResponder();
 }
 
 void GrinderTcpEnsureMdns(void) {
