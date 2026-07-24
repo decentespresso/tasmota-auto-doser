@@ -11,7 +11,7 @@ static const uint32_t kHeartbeatTimeoutMs = 2000;
 static const uint32_t kHelloTimeoutMs = 1000;
 static const uint32_t kCloseGraceMs = 250;
 static const uint32_t kTxTimeoutMs = 250;
-static const uint32_t kMdnsRefreshMs = 60000;
+static const uint32_t kOldMdnsRefreshMs = 60000;
 
 static std::string FormatOk(const bool relay_on) {
   char output[64];
@@ -80,9 +80,6 @@ struct GrinderTcpDriverSim {
   uint32_t normal_power_path_count = 0;
   uint32_t mdns_service_add_count = 0;
   uint32_t mdns_txt_add_count = 0;
-  uint32_t mdns_refresh_at = 0;
-  uint32_t mdns_forced_refreshes = 0;
-  uint32_t mdns_refresh_successes = 0;
   bool fake_power_driver_enabled = false;
   bool tcp_power_command = false;
   bool response_write_succeeds = true;
@@ -198,23 +195,16 @@ struct GrinderTcpDriverSim {
     }
   }
 
-  void Advertise(const bool force = false) {
+  void Advertise(void) {
     EnsureMdns();
-    if (!mdns_begun || (advertised && !force)) {
+    if (!mdns_begun || advertised) {
       return;
-    }
-    if (force) {
-      mdns_forced_refreshes++;
     }
     mdns_attempted = true;
     mdns_service_add_count++;
     mdns_txt_add_count++;
     if (mdns_service_added && mdns_txt_added) {
       advertised = true;
-      mdns_refresh_at = now + kMdnsRefreshMs;
-      if (force) {
-        mdns_refresh_successes++;
-      }
     }
   }
 
@@ -228,7 +218,7 @@ struct GrinderTcpDriverSim {
     KeepAwakeWhileConnected();
     const bool authenticated = connected && greeted && !close_pending;
     if (server_started && !relay_on && !authenticated) {
-      Advertise(advertised && (now >= mdns_refresh_at));
+      Advertise();
     }
   }
 
@@ -737,6 +727,10 @@ static void TestQuietDefaultsAreNotRewrittenInLoop(void) {
 #include "grinder_tcp_recovery_sim_tests.h"
 
 int main(void) {
+  TestWifiEventInterleavingCannotStrandWebserver();
+  TestStandaloneSameIpEventKeepsActiveDose();
+  TestWifiManagerSurvivesStationDisconnect();
+  TestLostIpPreservesDisconnectDiagnostics();
   TestFirstConnectionAndBusy();
   TestHundredSequentialSessions();
   TestRepeatedBusyDoesNotDisplaceActiveClient();
@@ -759,7 +753,7 @@ int main(void) {
   TestActiveClientKeepsAwakeAndDefersMdns();
   TestMdnsRestartReAdvertises();
   TestMdnsAddFailureRetries();
-  TestMdnsRefreshesPeriodicallyWhileIdle();
+  TestMdnsDoesNotRefreshPeriodicallyWhileIdle();
   TestByeClosesWithOff();
   TestBadCommandClosesWithOff();
   TestDuplicateHelloClosesWithOff();

@@ -62,10 +62,6 @@
 #define GRINDER_TCP_MDNS_RETRY 5000
 #endif
 
-#ifndef GRINDER_TCP_MDNS_REFRESH
-#define GRINDER_TCP_MDNS_REFRESH 60000
-#endif
-
 #ifndef GRINDER_TCP_MAX_BYTES_PER_LOOP
 #define GRINDER_TCP_MAX_BYTES_PER_LOOP 256
 #endif
@@ -114,7 +110,6 @@ struct {
   uint32_t last_rx = 0;
   uint32_t close_at = 0;
   uint32_t mdns_retry_at = 0;
-  uint32_t mdns_refresh_at = 0;
   char plug_mac[18] = { 0 };
   bool server_started = false;
   bool client_open = false;
@@ -128,7 +123,7 @@ struct {
 void GrinderTcpRestartServer(const char *reason);
 void GrinderTcpStop(const char *reason);
 void GrinderTcpCheckNetwork(void);
-void GrinderTcpAdvertise(const bool force = false);
+void GrinderTcpAdvertise(void);
 
 #include "tasmota_xdrv_driver/xdrv_95_grinder_tcp_diagnostics.h"
 
@@ -617,11 +612,9 @@ void GrinderTcpLoop(void) {
   if (GrinderTcp.server_started && !GrinderTcpRelayStateOn() && !authenticated) {
     if (!Mdns.begun) {
       GrinderTcp.advertised = false;
-      GrinderTcp.mdns_refresh_at = 0;
     }
-    const bool refresh = GrinderTcp.advertised && TimeReached(GrinderTcp.mdns_refresh_at);
-    if (!GrinderTcp.advertised || refresh) {
-      GrinderTcpAdvertise(refresh);
+    if (!GrinderTcp.advertised) {
+      GrinderTcpAdvertise();
     }
   }
 }
@@ -650,7 +643,6 @@ void GrinderTcpStart(void) {
   GrinderTcpDiag.server_generation++;
   GrinderTcpRecordEvent("server_started");
   GrinderTcp.mdns_retry_at = 0;
-  GrinderTcp.mdns_refresh_at = 0;
   GrinderTcpAdvertise();
   AddLogServerActive(PSTR("Grinder TCP"));
 }
@@ -676,13 +668,12 @@ void GrinderTcpStop(const char *reason) {
     GrinderTcpRecordEvent("server_stopped");
   }
   GrinderTcpRemoveMdnsService();
-  GrinderTcp.mdns_refresh_at = 0;
 }
 
 void GrinderTcpRestartServer(const char *reason) {
   const bool restarting = GrinderTcpDiag.server_generation > 0;
   GrinderTcpStop(reason);
-  if (!WifiHasIP()) {
+  if (!GrinderTcpNetworkUsable()) {
     return;
   }
   if (restarting) {

@@ -1,3 +1,18 @@
+bool GrinderTcpNetworkUsable(void) {
+  return (WL_CONNECTED == WiFi.status()) && WifiHasIPv4();
+}
+
+void GrinderTcpMarkNetworkDown(const char *reason) {
+  if (GrinderTcpDiag.network_connected) {
+    GrinderTcpDiag.network_down++;
+  }
+  GrinderTcpDiag.network_connected = false;
+  GrinderTcpDiag.identity_check_at = 0;
+  if (GrinderTcp.server_started || GrinderTcp.client_open || GrinderTcpRelayStateOn()) {
+    GrinderTcpStop(reason);
+  }
+}
+
 void GrinderTcpEnsureMdns(void) {
   Settings->flag3.mdns_enabled = 1;
   const bool was_begun = Mdns.begun;
@@ -6,7 +21,6 @@ void GrinderTcpEnsureMdns(void) {
   }
   if (!was_begun && Mdns.begun) {
     GrinderTcp.advertised = false;
-    GrinderTcp.mdns_refresh_at = 0;
   }
 #if defined(USE_WEBSERVER) && defined(WEBSERVER_ADVERTISE)
   if ((1 == Mdns.begun) && Settings->webserver) {
@@ -31,21 +45,28 @@ void GrinderTcpRemoveMdnsService(void) {
   GrinderTcp.advertised = false;
 }
 
-void GrinderTcpAdvertise(const bool force) {
+void GrinderTcpRecordMdnsDuration(const uint32_t started) {
+  const uint32_t duration = millis() - started;
+  if (duration > GrinderTcpDiag.max_mdns_duration) {
+    GrinderTcpDiag.max_mdns_duration = duration;
+  }
+}
+
+void GrinderTcpAdvertise(void) {
   if (!TimeReached(GrinderTcp.mdns_retry_at)) {
     return;
   }
   GrinderTcp.mdns_retry_at = millis() + GRINDER_TCP_MDNS_RETRY;
+  const uint32_t started = millis();
   GrinderTcpEnsureMdns();
   if (!Mdns.begun) {
     GrinderTcpDiag.mdns_responder_unavailable++;
+    GrinderTcpRecordMdnsDuration(started);
     return;
   }
-  if (GrinderTcp.advertised && !force) {
+  if (GrinderTcp.advertised) {
+    GrinderTcpRecordMdnsDuration(started);
     return;
-  }
-  if (force) {
-    GrinderTcpDiag.mdns_forced_refreshes++;
   }
   GrinderTcpRemoveMdnsService();
   char service[] = "grinderplug";
@@ -74,52 +95,67 @@ void GrinderTcpAdvertise(const bool force) {
          GRINDER_TCP_PORT);
   if (service_added && txt_added) {
     GrinderTcp.advertised = true;
-    GrinderTcp.mdns_refresh_at = millis() + GRINDER_TCP_MDNS_REFRESH;
     GrinderTcpDiag.mdns_successes++;
-    if (force) {
-      GrinderTcpDiag.mdns_refresh_successes++;
-    }
     GrinderTcpRecordEvent("mdns_registered");
   } else {
     GrinderTcpDiag.mdns_failures++;
     GrinderTcpRecordEvent("mdns_failed");
   }
+  GrinderTcpRecordMdnsDuration(started);
 }
 
 void GrinderTcpCheckNetwork(void) {
+  const uint32_t wifi_event_generation = WifiEventGeneration();
+  if (wifi_event_generation != GrinderTcpDiag.observed_wifi_event_generation) {
+    GrinderTcpDiag.identity_check_at = 0;
+    GrinderTcpMarkNetworkDown("wifi_event_down");
+  }
   if (!TimeReached(GrinderTcpDiag.identity_check_at)) {
     return;
   }
   GrinderTcpDiag.identity_check_at = millis() + GRINDER_TCP_IDENTITY_CHECK;
-  if (!WifiHasIP()) {
-    if (GrinderTcpDiag.network_connected) {
-      GrinderTcpDiag.network_down++;
-      GrinderTcpDiag.network_connected = false;
-      GrinderTcpStop("network_down");
-    }
+  if (!GrinderTcpNetworkUsable()) {
+    GrinderTcpMarkNetworkDown("network_down");
     return;
   }
+
   const bool reconnected = !GrinderTcpDiag.network_connected;
   char bssid[18];
   GrinderTcpFormatBssid(bssid, sizeof(bssid));
   const uint32_t local_ip = (uint32_t)WiFi.localIP();
+  const uint16_t link_count = WifiLinkCount();
+  const uint32_t wifi_event_changes = wifi_event_generation - GrinderTcpDiag.observed_wifi_event_generation;
   const bool ip_changed = GrinderTcpDiag.identity_valid && (local_ip != GrinderTcpDiag.observed_ip);
   const bool bssid_changed = GrinderTcpDiag.identity_valid && strcmp(bssid, GrinderTcpDiag.observed_bssid);
+  const bool link_changed = GrinderTcpDiag.identity_valid &&
+                            ((link_count != GrinderTcpDiag.observed_link_count) ||
+                             wifi_event_changes);
+
   GrinderTcpDiag.local_ip_changes += ip_changed;
   GrinderTcpDiag.bssid_changes += bssid_changed;
+  GrinderTcpDiag.link_changes += link_changed;
   GrinderTcpDiag.observed_ip = local_ip;
+  GrinderTcpDiag.observed_link_count = link_count;
+  GrinderTcpDiag.observed_wifi_event_generation = wifi_event_generation;
   strlcpy(GrinderTcpDiag.observed_bssid, bssid, sizeof(GrinderTcpDiag.observed_bssid));
   GrinderTcpDiag.identity_valid = true;
   GrinderTcpDiag.network_connected = true;
-  if (!reconnected && !ip_changed && !bssid_changed) {
+  if (reconnected) {
+    GrinderTcpDiag.network_up++;
+  }
+
+  if (!reconnected && !ip_changed && !bssid_changed && !link_changed) {
     if (!GrinderTcp.server_started) {
       GrinderTcpRestartServer("listener_missing");
     }
     return;
   }
-  GrinderTcpDiag.network_generation++;
+
+  GrinderTcpDiag.network_generation += wifi_event_changes ? wifi_event_changes : 1;
   const char *reason = "network_reconnect";
-  if (ip_changed && bssid_changed) {
+  if (link_changed) {
+    reason = "wifi_link_change";
+  } else if (ip_changed && bssid_changed) {
     reason = "ip_bssid_change";
   } else if (ip_changed) {
     reason = "local_ip_change";
@@ -131,14 +167,10 @@ void GrinderTcpCheckNetwork(void) {
 }
 
 void GrinderTcpNetworkUp(void) {
-  GrinderTcpDiag.network_up++;
   GrinderTcpDiag.identity_check_at = 0;
   GrinderTcpCheckNetwork();
 }
 
 void GrinderTcpNetworkDown(void) {
-  GrinderTcpDiag.network_down++;
-  GrinderTcpDiag.network_connected = false;
-  GrinderTcpDiag.identity_check_at = 0;
-  GrinderTcpStop("network_down");
+  GrinderTcpMarkNetworkDown("network_down");
 }

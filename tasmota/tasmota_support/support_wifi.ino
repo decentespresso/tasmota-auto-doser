@@ -728,6 +728,155 @@ void WifiSetState(uint8_t state)
   }
 }
 
+#if defined(ESP32) && defined(USE_GRINDER_TCP)
+struct {
+  portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+  uint32_t pending_disconnected = 0;
+  uint32_t pending_lost_ip = 0;
+  uint32_t pending_got_ip = 0;
+  uint32_t pending_outages = 0;
+  uint32_t pending_down_at = 0;
+  uint32_t pending_got_ip_at = 0;
+  uint32_t disconnect_events = 0;
+  uint32_t lost_ip_events = 0;
+  uint32_t got_ip_events = 0;
+  uint32_t generation = 0;
+  uint32_t outage_started_at = 0;
+  uint32_t last_recovery_duration = 0;
+  uint8_t pending_disconnect_reason = 0;
+  uint8_t last_disconnect_reason = 0;
+  bool pending_down = false;
+  bool pending_got_ip_event = false;
+  bool pending_ip_changed = false;
+  bool callback_outage_active = false;
+  bool outage_active = false;
+} WifiEventState;
+
+void WifiCaptureDownEvent(const uint8_t reason, const bool disconnected) {
+  const uint32_t now = millis();
+  portENTER_CRITICAL(&WifiEventState.mux);
+  if (disconnected) {
+    WifiEventState.pending_disconnected++;
+  } else {
+    WifiEventState.pending_lost_ip++;
+  }
+  if (!WifiEventState.callback_outage_active) {
+    WifiEventState.pending_outages++;
+    WifiEventState.pending_down_at = now;
+    WifiEventState.pending_disconnect_reason = reason;
+    WifiEventState.callback_outage_active = true;
+  } else if (!WifiEventState.pending_disconnect_reason && disconnected) {
+    WifiEventState.pending_disconnect_reason = reason;
+  }
+  WifiEventState.pending_down = true;
+  portEXIT_CRITICAL(&WifiEventState.mux);
+}
+
+void WifiCaptureGotIpEvent(const bool ip_changed) {
+  const uint32_t now = millis();
+  portENTER_CRITICAL(&WifiEventState.mux);
+  WifiEventState.pending_got_ip++;
+  WifiEventState.pending_got_ip_at = now;
+  WifiEventState.pending_got_ip_event = true;
+  WifiEventState.pending_ip_changed |= ip_changed;
+  if (ip_changed && !WifiEventState.callback_outage_active) {
+    WifiEventState.pending_outages++;
+  }
+  WifiEventState.callback_outage_active = false;
+  portEXIT_CRITICAL(&WifiEventState.mux);
+}
+
+void WifiProcessEvents(void) {
+  uint32_t disconnected;
+  uint32_t lost_ip;
+  uint32_t got_ip;
+  uint32_t outages;
+  uint32_t down_at;
+  uint32_t got_ip_at;
+  uint8_t disconnect_reason;
+  bool down;
+  bool got_ip_event;
+  bool ip_changed;
+
+  portENTER_CRITICAL(&WifiEventState.mux);
+  disconnected = WifiEventState.pending_disconnected;
+  lost_ip = WifiEventState.pending_lost_ip;
+  got_ip = WifiEventState.pending_got_ip;
+  outages = WifiEventState.pending_outages;
+  down_at = WifiEventState.pending_down_at;
+  got_ip_at = WifiEventState.pending_got_ip_at;
+  disconnect_reason = WifiEventState.pending_disconnect_reason;
+  down = WifiEventState.pending_down;
+  got_ip_event = WifiEventState.pending_got_ip_event;
+  ip_changed = WifiEventState.pending_ip_changed;
+  WifiEventState.pending_disconnected = 0;
+  WifiEventState.pending_lost_ip = 0;
+  WifiEventState.pending_got_ip = 0;
+  WifiEventState.pending_outages = 0;
+  WifiEventState.pending_disconnect_reason = 0;
+  WifiEventState.pending_down = false;
+  WifiEventState.pending_got_ip_event = false;
+  WifiEventState.pending_ip_changed = false;
+  portEXIT_CRITICAL(&WifiEventState.mux);
+
+  if (!disconnected && !lost_ip && !got_ip) {
+    return;
+  }
+
+  WifiEventState.disconnect_events += disconnected;
+  WifiEventState.lost_ip_events += lost_ip;
+  WifiEventState.got_ip_events += got_ip;
+  Wifi.counter = 1;
+
+  if (down || ip_changed) {
+    if (outages) {
+      WifiEventState.outage_active = true;
+      WifiEventState.outage_started_at = down ? down_at : got_ip_at;
+      WifiEventState.last_disconnect_reason = disconnected ? disconnect_reason : 0;
+      WifiEventState.generation += outages;
+    } else if (!WifiEventState.last_disconnect_reason && disconnected) {
+      WifiEventState.last_disconnect_reason = disconnect_reason;
+    }
+#ifdef USE_WEBSERVER
+    if ((WIFI_MANAGER != Wifi.config_type) &&
+        (WIFI_MANAGER_RESET_ONLY != Wifi.config_type)) {
+      StopWebserver();
+    }
+#endif
+    WifiSetState(0);
+  }
+
+  if (got_ip_event && WifiEventState.outage_active && (WL_CONNECTED == WiFi.status()) && WifiHasIPv4()) {
+    WifiEventState.last_recovery_duration = got_ip_at - WifiEventState.outage_started_at;
+    WifiEventState.outage_active = false;
+  }
+}
+
+uint32_t WifiDisconnectEventCount(void) {
+  return WifiEventState.disconnect_events;
+}
+
+uint32_t WifiLostIpEventCount(void) {
+  return WifiEventState.lost_ip_events;
+}
+
+uint32_t WifiGotIpEventCount(void) {
+  return WifiEventState.got_ip_events;
+}
+
+uint32_t WifiEventGeneration(void) {
+  return WifiEventState.generation;
+}
+
+uint32_t WifiLastRecoveryDuration(void) {
+  return WifiEventState.last_recovery_duration;
+}
+
+uint8_t WifiLastDisconnectReason(void) {
+  return WifiEventState.last_disconnect_reason;
+}
+#endif
+
 /*****************************************************************************************************\
  * IP detection revised for full IPv4 / IPv6 support
  *
@@ -1308,6 +1457,9 @@ void WifiCheckIp(void) {
  */
 void WifiCheck(uint8_t param)
 {
+#if defined(ESP32) && defined(USE_GRINDER_TCP)
+  WifiProcessEvents();
+#endif
   Wifi.counter--;
   switch (param) {
   case WIFI_SERIAL:
@@ -2172,6 +2324,16 @@ extern esp_netif_t* get_esp_interface_netif(esp_interface_t interface);
 void WifiEvents(arduino_event_t *event) {
   switch (event->event_id) {
 
+#ifdef USE_GRINDER_TCP
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      WifiCaptureDownEvent(event->event_info.wifi_sta_disconnected.reason, true);
+      break;
+
+    case ARDUINO_EVENT_WIFI_STA_LOST_IP:
+      WifiCaptureDownEvent(0, false);
+      break;
+#endif
+
 #ifdef USE_IPV6
     case ARDUINO_EVENT_WIFI_STA_GOT_IP6:
     {
@@ -2200,6 +2362,9 @@ void WifiEvents(arduino_event_t *event) {
 #endif // USE_IPV6
     case ARDUINO_EVENT_WIFI_STA_GOT_IP:
     {
+#ifdef USE_GRINDER_TCP
+      WifiCaptureGotIpEvent(event->event_info.got_ip.ip_changed);
+#endif
       // Force republishing of MDNS entries from potential previous sessions
       WifiMDNSAfterReconnectv4();
 
