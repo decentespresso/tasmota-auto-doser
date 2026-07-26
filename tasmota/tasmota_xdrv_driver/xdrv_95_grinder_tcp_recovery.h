@@ -10,6 +10,175 @@ void GrinderTcpResetMdnsResponder(void) {
   GrinderTcp.advertised = false;
 }
 
+uint32_t GrinderTcpPeerRecoveryRemainingMs(const uint32_t deadline) {
+  if (!deadline || TimeReached(deadline)) {
+    return 0;
+  }
+  return deadline - millis();
+}
+
+uint32_t GrinderTcpPeerRecoveryDueMs(void) {
+  return GrinderTcpPeerRecoveryRemainingMs(GrinderTcpPeerRecovery.deadline);
+}
+
+uint32_t GrinderTcpPeerRecoveryCooldownMs(void) {
+  return GrinderTcpPeerRecoveryRemainingMs(GrinderTcpPeerRecovery.cooldown_until);
+}
+
+void GrinderTcpPeerRecoverySetText(char *output, const size_t output_size, const char *value) {
+  strlcpy(output, value, output_size);
+}
+
+void GrinderTcpPeerRecoveryFinish(const char *outcome) {
+  GrinderTcpPeerRecovery.state = GRINDER_TCP_PEER_RECOVERY_IDLE;
+  GrinderTcpPeerRecovery.deadline = 0;
+  GrinderTcpPeerRecovery.attempted = false;
+  GrinderTcpPeerRecoverySetText(GrinderTcpDiag.last_peer_recovery_outcome,
+                                sizeof(GrinderTcpDiag.last_peer_recovery_outcome),
+                                outcome);
+  GrinderTcpRecordEvent(outcome);
+}
+
+void GrinderTcpPeerRecoveryArm(const char *trigger) {
+  if (!GrinderTcp.server_started || !GrinderTcpNetworkUsable()) {
+    return;
+  }
+  if (GrinderTcp.client_open && GrinderTcp.greeted) {
+    return;
+  }
+  GrinderTcpPeerRecovery.state = GRINDER_TCP_PEER_RECOVERY_WAIT_HELLO;
+  GrinderTcpPeerRecovery.deadline = millis() + GRINDER_TCP_PEER_RECOVERY_GRACE_MS;
+  GrinderTcpPeerRecovery.attempted = false;
+  GrinderTcpPeerRecovery.armed_network_generation = GrinderTcpDiag.network_generation;
+  GrinderTcpPeerRecoverySetText(GrinderTcpDiag.last_peer_recovery_trigger,
+                                sizeof(GrinderTcpDiag.last_peer_recovery_trigger),
+                                trigger);
+  GrinderTcpPeerRecoverySetText(GrinderTcpDiag.last_peer_recovery_outcome,
+                                sizeof(GrinderTcpDiag.last_peer_recovery_outcome),
+                                "waiting_hello");
+  GrinderTcpRecordEvent("peer_wait");
+}
+
+bool GrinderTcpPeerRecoveryEligibleClose(const char *reason) {
+  if (!reason) {
+    return false;
+  }
+  return !strcmp(reason, "socket_closed") ||
+         !strcmp(reason, "heartbeat_timeout") ||
+         !strcmp(reason, "tx_failed") ||
+         !strcmp(reason, "tx_queue_failed") ||
+         !strcmp(reason, "disconnect");
+}
+
+void GrinderTcpPeerRecoveryOnSessionClosed(const char *reason, const bool was_greeted, const bool expected_close) {
+  if (!was_greeted || expected_close || !GrinderTcpPeerRecoveryEligibleClose(reason)) {
+    return;
+  }
+  GrinderTcpPeerRecoveryArm(reason);
+}
+
+void GrinderTcpPeerRecoveryOnNetworkReady(const char *trigger) {
+  if (!GrinderTcp.server_started || !GrinderTcpNetworkUsable()) {
+    return;
+  }
+  const uint32_t generation = GrinderTcpDiag.network_generation;
+  if (GrinderTcpPeerRecovery.attempted) {
+    if ((GRINDER_TCP_PEER_RECOVERY_WAIT_NETWORK == GrinderTcpPeerRecovery.state) ||
+        (generation != GrinderTcpPeerRecovery.armed_network_generation)) {
+      GrinderTcpPeerRecovery.state = GRINDER_TCP_PEER_RECOVERY_VERIFY_HELLO;
+      GrinderTcpPeerRecovery.deadline = millis() + GRINDER_TCP_PEER_RECOVERY_GRACE_MS;
+      GrinderTcpPeerRecovery.armed_network_generation = generation;
+      GrinderTcpPeerRecoverySetText(GrinderTcpDiag.last_peer_recovery_outcome,
+                                    sizeof(GrinderTcpDiag.last_peer_recovery_outcome),
+                                    "wifi_returned");
+      GrinderTcpRecordEvent("peer_verify");
+    }
+    return;
+  }
+  if ((GRINDER_TCP_PEER_RECOVERY_WAIT_HELLO == GrinderTcpPeerRecovery.state) &&
+      (generation == GrinderTcpPeerRecovery.armed_network_generation)) {
+    return;
+  }
+  GrinderTcpPeerRecoveryArm(trigger);
+}
+
+void GrinderTcpPeerRecoveryOnHello(void) {
+  const bool was_active = GRINDER_TCP_PEER_RECOVERY_IDLE != GrinderTcpPeerRecovery.state;
+  const bool had_attempt = GrinderTcpPeerRecovery.attempted;
+  if (was_active) {
+    if (had_attempt) {
+      GrinderTcpDiag.peer_recovery_successes++;
+      GrinderTcpPeerRecoverySetText(GrinderTcpDiag.last_peer_recovery_outcome,
+                                    sizeof(GrinderTcpDiag.last_peer_recovery_outcome),
+                                    "peer_returned");
+      GrinderTcpRecordEvent("peer_returned");
+    } else {
+      GrinderTcpDiag.peer_recovery_cancelled++;
+      GrinderTcpPeerRecoverySetText(GrinderTcpDiag.last_peer_recovery_outcome,
+                                    sizeof(GrinderTcpDiag.last_peer_recovery_outcome),
+                                    "hello_before_attempt");
+      GrinderTcpRecordEvent("hello_before_attempt");
+    }
+  }
+  GrinderTcpPeerRecovery.state = GRINDER_TCP_PEER_RECOVERY_IDLE;
+  GrinderTcpPeerRecovery.deadline = 0;
+  GrinderTcpPeerRecovery.attempted = false;
+}
+
+void GrinderTcpPeerRecoveryTick(void) {
+  if (GRINDER_TCP_PEER_RECOVERY_IDLE == GrinderTcpPeerRecovery.state) {
+    return;
+  }
+  if (GRINDER_TCP_PEER_RECOVERY_WAIT_NETWORK == GrinderTcpPeerRecovery.state) {
+    if (TimeReached(GrinderTcpPeerRecovery.deadline)) {
+      GrinderTcpDiag.peer_recovery_wifi_failures++;
+      GrinderTcpPeerRecoveryFinish("wifi_timeout");
+    }
+    return;
+  }
+  if (!GrinderTcpNetworkUsable() || !GrinderTcp.server_started) {
+    return;
+  }
+  if (!TimeReached(GrinderTcpPeerRecovery.deadline)) {
+    return;
+  }
+  if (GRINDER_TCP_PEER_RECOVERY_VERIFY_HELLO == GrinderTcpPeerRecovery.state) {
+    GrinderTcpDiag.peer_recovery_no_peer++;
+    GrinderTcpPeerRecoveryFinish("no_peer");
+    return;
+  }
+  if (GrinderTcpPeerRecovery.cooldown_until && !TimeReached(GrinderTcpPeerRecovery.cooldown_until)) {
+    GrinderTcpDiag.peer_recovery_suppressed++;
+    GrinderTcpPeerRecoveryFinish("cooldown");
+    return;
+  }
+  if (TasmotaGlobal.restart_flag || TasmotaGlobal.ota_state_flag || Wifi.config_type || Wifi.scan_state) {
+    GrinderTcpDiag.peer_recovery_suppressed++;
+    GrinderTcpPeerRecoveryFinish("system_busy");
+    return;
+  }
+
+  const uint32_t now = millis();
+  GrinderTcpPeerRecovery.state = GRINDER_TCP_PEER_RECOVERY_WAIT_NETWORK;
+  GrinderTcpPeerRecovery.deadline = now + GRINDER_TCP_PEER_RECOVERY_WIFI_TIMEOUT_MS;
+  GrinderTcpPeerRecovery.cooldown_until = now + GRINDER_TCP_PEER_RECOVERY_COOLDOWN_MS;
+  GrinderTcpPeerRecovery.attempted = true;
+  GrinderTcpDiag.peer_recovery_attempts++;
+  GrinderTcpPeerRecoverySetText(GrinderTcpDiag.last_peer_recovery_outcome,
+                                sizeof(GrinderTcpDiag.last_peer_recovery_outcome),
+                                "reassociate");
+  AddLog(LOG_LEVEL_INFO,
+         PSTR("GTC: PeerRecovery reassociate trigger %s attempt %u"),
+         GrinderTcpDiag.last_peer_recovery_trigger,
+         GrinderTcpDiag.peer_recovery_attempts);
+
+  GrinderTcpStop("peer_recovery");
+  GrinderTcpRecordEvent("peer_recovery");
+  WifiBegin(3, Settings->wifi_channel);
+  Wifi.counter = 1;
+  GrinderTcpDiag.identity_check_at = 0;
+}
+
 void GrinderTcpMarkNetworkDown(const char *reason) {
   if (GrinderTcpDiag.network_connected) {
     GrinderTcpDiag.network_down++;
@@ -159,6 +328,7 @@ void GrinderTcpCheckNetwork(void) {
   if (!reconnected && !ip_changed && !bssid_changed && !link_changed) {
     if (!GrinderTcp.server_started) {
       GrinderTcpRestartServer("listener_missing");
+      GrinderTcpPeerRecoveryOnNetworkReady("listener_missing");
     }
     return;
   }
@@ -176,6 +346,7 @@ void GrinderTcpCheckNetwork(void) {
   }
   strlcpy(GrinderTcpDiag.last_network_reason, reason, sizeof(GrinderTcpDiag.last_network_reason));
   GrinderTcpRestartServer(reason);
+  GrinderTcpPeerRecoveryOnNetworkReady(reason);
 }
 
 void GrinderTcpNetworkUp(void) {

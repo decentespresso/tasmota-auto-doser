@@ -14,6 +14,12 @@ struct {
   uint32_t hello_timeouts = 0;
   uint32_t heartbeat_timeouts = 0;
   uint32_t protocol_errors = 0;
+  uint32_t peer_recovery_attempts = 0;
+  uint32_t peer_recovery_successes = 0;
+  uint32_t peer_recovery_cancelled = 0;
+  uint32_t peer_recovery_no_peer = 0;
+  uint32_t peer_recovery_wifi_failures = 0;
+  uint32_t peer_recovery_suppressed = 0;
   uint32_t mdns_attempts = 0;
   uint32_t mdns_successes = 0;
   uint32_t mdns_failures = 0;
@@ -37,6 +43,8 @@ struct {
   char last_close_reason[24] = "none";
   char last_fail_safe_reason[24] = "boot";
   char last_network_reason[24] = "boot";
+  char last_peer_recovery_trigger[24] = "boot";
+  char last_peer_recovery_outcome[24] = "none";
   bool identity_valid = false;
   bool network_connected = false;
 } GrinderTcpDiag;
@@ -103,6 +111,8 @@ void CmndGrinderStatus(void) {
   const uint32_t event_age = now - GrinderTcpDiag.last_event_at;
   const uint32_t free_heap = ESP_getFreeHeap();
   const uint32_t min_free_heap = (UINT32_MAX == GrinderTcpDiag.min_free_heap) ? free_heap : GrinderTcpDiag.min_free_heap;
+  const uint32_t peer_recovery_due = GrinderTcpPeerRecoveryDueMs();
+  const uint32_t peer_recovery_cooldown = GrinderTcpPeerRecoveryCooldownMs();
   const bool network_usable = (WL_CONNECTED == WiFi.status()) && WifiHasIPv4();
   char bssid[18];
   GrinderTcpFormatBssid(bssid, sizeof(bssid));
@@ -110,6 +120,11 @@ void CmndGrinderStatus(void) {
              network_usable, (int)WiFi.status(), local_ip.c_str(), bssid, WiFi.RSSI(), GrinderTcpDiag.network_generation, GrinderTcpDiag.observed_link_count, WifiLastDisconnectReason(), WifiLastRecoveryDuration());
   ResponseAppend_P(PSTR("\"TCP\":{\"Listen\":%u,\"Gen\":%u,\"Client\":%u,\"Hello\":%u,\"Closing\":%u,\"PeerIP\":\"%s\",\"PeerPort\":%u,\"RxAge\":%u},"),
                    GrinderTcp.server_started, GrinderTcpDiag.server_generation, GrinderTcp.client_open, GrinderTcp.greeted, GrinderTcp.close_pending, remote_ip.c_str(), GrinderTcpDiag.active_remote_port, last_rx_age);
+  ResponseAppend_P(PSTR("\"PeerRecovery\":{\"State\":%u,\"Attempted\":%u,\"DueMs\":%u,\"CooldownMs\":%u,\"Try\":%u,\"Ok\":%u,\"Cancel\":%u,\"NoPeer\":%u,\"WiFiFail\":%u,\"Skip\":%u,\"Trigger\":\"%s\",\"Outcome\":\"%s\"},"),
+                   (uint32_t)GrinderTcpPeerRecovery.state, GrinderTcpPeerRecovery.attempted, peer_recovery_due, peer_recovery_cooldown,
+                   GrinderTcpDiag.peer_recovery_attempts, GrinderTcpDiag.peer_recovery_successes, GrinderTcpDiag.peer_recovery_cancelled,
+                   GrinderTcpDiag.peer_recovery_no_peer, GrinderTcpDiag.peer_recovery_wifi_failures, GrinderTcpDiag.peer_recovery_suppressed,
+                   GrinderTcpDiag.last_peer_recovery_trigger, GrinderTcpDiag.last_peer_recovery_outcome);
   ResponseAppend_P(PSTR("\"mDNS\":{\"Ad\":%u,\"Up\":%u,\"MaxMs\":%u},\"Relay\":{\"Owner\":%u,\"On\":%u},\"Heap\":{\"Free\":%u,\"Min\":%u},\"Loop\":{\"MaxGapMs\":%u},"),
                    GrinderTcp.advertised, Mdns.begun, GrinderTcpDiag.max_mdns_duration, GrinderTcpRelayOwned(), GrinderTcpRelayStateOn(), free_heap, min_free_heap, GrinderTcpDiag.max_loop_gap);
   ResponseAppend_P(PSTR("\"Last\":{\"Event\":\"%s\",\"Age\":%u,\"Net\":\"%s\"},"),

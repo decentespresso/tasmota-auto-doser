@@ -70,6 +70,18 @@
 #define GRINDER_TCP_IDENTITY_CHECK 5000
 #endif
 
+#ifndef GRINDER_TCP_PEER_RECOVERY_GRACE_MS
+#define GRINDER_TCP_PEER_RECOVERY_GRACE_MS 15000
+#endif
+
+#ifndef GRINDER_TCP_PEER_RECOVERY_WIFI_TIMEOUT_MS
+#define GRINDER_TCP_PEER_RECOVERY_WIFI_TIMEOUT_MS 30000
+#endif
+
+#ifndef GRINDER_TCP_PEER_RECOVERY_COOLDOWN_MS
+#define GRINDER_TCP_PEER_RECOVERY_COOLDOWN_MS 600000
+#endif
+
 #ifndef GRINDER_TCP_MODEL
 #define GRINDER_TCP_MODEL "NOUS_A6T"
 #endif
@@ -118,12 +130,34 @@ struct {
   bool authorized_on = false;
   bool close_pending = false;
   bool tcp_power_command = false;
+  bool session_close_expected = false;
 } GrinderTcp;
+
+enum GrinderTcpPeerRecoveryState {
+  GRINDER_TCP_PEER_RECOVERY_IDLE,
+  GRINDER_TCP_PEER_RECOVERY_WAIT_HELLO,
+  GRINDER_TCP_PEER_RECOVERY_WAIT_NETWORK,
+  GRINDER_TCP_PEER_RECOVERY_VERIFY_HELLO
+};
+
+struct {
+  uint32_t deadline = 0;
+  uint32_t cooldown_until = 0;
+  uint32_t armed_network_generation = 0;
+  GrinderTcpPeerRecoveryState state = GRINDER_TCP_PEER_RECOVERY_IDLE;
+  bool attempted = false;
+} GrinderTcpPeerRecovery;
 
 void GrinderTcpRestartServer(const char *reason);
 void GrinderTcpStop(const char *reason);
 void GrinderTcpCheckNetwork(void);
 void GrinderTcpAdvertise(void);
+void GrinderTcpPeerRecoveryOnHello(void);
+void GrinderTcpPeerRecoveryOnSessionClosed(const char *reason, const bool was_greeted, const bool expected_close);
+void GrinderTcpPeerRecoveryOnNetworkReady(const char *trigger);
+void GrinderTcpPeerRecoveryTick(void);
+uint32_t GrinderTcpPeerRecoveryDueMs(void);
+uint32_t GrinderTcpPeerRecoveryCooldownMs(void);
 
 #include "tasmota_xdrv_driver/xdrv_95_grinder_tcp_diagnostics.h"
 
@@ -321,6 +355,8 @@ bool GrinderTcpQueueErr(const uint32_t reason) {
 }
 
 void GrinderTcpResetActiveClient(const char *reason) {
+  const bool was_greeted = GrinderTcp.client_open && GrinderTcp.greeted;
+  const bool expected_close = GrinderTcp.session_close_expected;
   if (GrinderTcp.client_open) {
     GrinderTcpDiag.active_disconnects++;
     strlcpy(GrinderTcpDiag.last_close_reason, reason, sizeof(GrinderTcpDiag.last_close_reason));
@@ -331,12 +367,14 @@ void GrinderTcpResetActiveClient(const char *reason) {
   GrinderTcp.greeted = false;
   GrinderTcp.authorized_on = false;
   GrinderTcp.close_pending = false;
+  GrinderTcp.session_close_expected = false;
   GrinderTcp.last_rx = 0;
   GrinderTcp.close_at = 0;
   GrinderTcpDiag.active_remote_ip = 0;
   GrinderTcpDiag.active_remote_port = 0;
   GrinderTcpLineReset(&GrinderTcp.reader);
   GrinderTcpResetTx(GrinderTcp.tx);
+  GrinderTcpPeerRecoveryOnSessionClosed(reason, was_greeted, expected_close);
 }
 
 void GrinderTcpCloseActiveNow(const bool relay_off, const char *reason = "disconnect") {
@@ -358,6 +396,7 @@ void GrinderTcpScheduleActiveClose(const bool relay_off, const char *reason = "p
   }
   strlcpy(GrinderTcpDiag.last_close_reason, reason, sizeof(GrinderTcpDiag.last_close_reason));
   GrinderTcp.authorized_on = false;
+  GrinderTcp.session_close_expected = true;
   GrinderTcp.close_pending = true;
   GrinderTcp.close_at = millis() + GRINDER_TCP_CLOSE_GRACE;
 }
@@ -379,7 +418,7 @@ void GrinderTcpFlushActiveTx(void) {
   }
   GrinderTcpResetTx(GrinderTcp.tx);
   if (GRINDER_TCP_TX_FAILED == result) {
-    GrinderTcpCloseActiveNow(true);
+    GrinderTcpCloseActiveNow(true, "tx_failed");
   } else if (close_after) {
     GrinderTcpScheduleActiveClose(false);
   }
@@ -387,9 +426,10 @@ void GrinderTcpFlushActiveTx(void) {
 
 void GrinderTcpQueueActiveErrAndClose(const uint32_t reason) {
   GrinderTcpDiag.protocol_errors++;
+  GrinderTcp.session_close_expected = true;
   GrinderTcpRelayOff("protocol_error");
   if (!GrinderTcpQueueErr(reason)) {
-    GrinderTcpCloseActiveNow(false);
+    GrinderTcpCloseActiveNow(false, "protocol_error");
   }
 }
 
@@ -451,6 +491,7 @@ void GrinderTcpAccept(WiFiClient &client) {
   GrinderTcp.greeted = false;
   GrinderTcp.authorized_on = false;
   GrinderTcp.close_pending = false;
+  GrinderTcp.session_close_expected = false;
   GrinderTcp.last_rx = millis();
   GrinderTcp.close_at = 0;
   GrinderTcpLineReset(&GrinderTcp.reader);
@@ -479,6 +520,7 @@ void GrinderTcpProcessLine(const char *line) {
     case GRINDER_TCP_ACTION_HELLO:
       GrinderTcp.greeted = true;
       GrinderTcp.authorized_on = false;
+      GrinderTcpPeerRecoveryOnHello();
       break;
     case GRINDER_TCP_ACTION_PING:
       break;
@@ -491,6 +533,7 @@ void GrinderTcpProcessLine(const char *line) {
     case GRINDER_TCP_ACTION_STATE:
       break;
     case GRINDER_TCP_ACTION_BYE:
+      GrinderTcp.session_close_expected = true;
       GrinderTcpRelayOff();
       close_after_response = true;
       break;
@@ -499,7 +542,7 @@ void GrinderTcpProcessLine(const char *line) {
       return;
   }
   if (!GrinderTcpQueueOk(close_after_response)) {
-    GrinderTcpCloseActiveNow(true);
+    GrinderTcpCloseActiveNow(true, "tx_queue_failed");
   }
 }
 
@@ -511,7 +554,7 @@ void GrinderTcpProcessEmergencyOff(void) {
   }
   GrinderTcpRelayOff();
   if (!GrinderTcpQueueOk()) {
-    GrinderTcpCloseActiveNow(false);
+    GrinderTcpCloseActiveNow(false, "tx_queue_failed");
   }
 }
 
@@ -608,6 +651,11 @@ void GrinderTcpLoop(void) {
   GrinderTcpEnforceRelayOwnership();
   GrinderTcpKeepAwakeWhileConnected();
   GrinderTcpPollServer();
+  if (GrinderTcp.client_open && !GrinderTcp.greeted) {
+    GrinderTcpReadClient();
+    GrinderTcpFlushActiveTx();
+  }
+  GrinderTcpPeerRecoveryTick();
   const bool authenticated = GrinderTcp.client_open && GrinderTcp.greeted && !GrinderTcp.close_pending;
   if (GrinderTcp.server_started && !GrinderTcpRelayStateOn() && !authenticated) {
     if (!Mdns.begun) {

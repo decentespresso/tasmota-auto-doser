@@ -29,6 +29,7 @@ def assert_diagnostics_fit():
         "GrinderStatus": {
             "Net": {"Up": 1, "WL": i32, "IP": ip, "BSSID": "FF:FF:FF:FF:FF:FF", "RSSI": i32, "Gen": u32, "Link": u32, "Reason": 255, "RecoveryMs": u32},
             "TCP": {"Listen": 1, "Gen": u32, "Client": 1, "Hello": 1, "Closing": 1, "PeerIP": ip, "PeerPort": 65535, "RxAge": u32},
+            "PeerRecovery": {"State": 255, "Attempted": 1, "DueMs": u32, "CooldownMs": u32, "Try": u32, "Ok": u32, "Cancel": u32, "NoPeer": u32, "WiFiFail": u32, "Skip": u32, "Trigger": text23, "Outcome": text23},
             "mDNS": {"Ad": 1, "Up": 1, "MaxMs": u32},
             "Relay": {"Owner": 1, "On": 1},
             "Heap": {"Free": u32, "Min": u32},
@@ -56,6 +57,11 @@ def main():
     assert "Settings->deepsleep = 0;" in DRIVER
     assert "Settings->flag5.wifi_no_sleep = 1;" in DRIVER
     assert "Settings->flag3.use_wifi_rescan = 0;" in DRIVER
+    assert "#define GRINDER_TCP_PEER_RECOVERY_GRACE_MS 15000" in DRIVER
+    assert "#define GRINDER_TCP_PEER_RECOVERY_WIFI_TIMEOUT_MS 30000" in DRIVER
+    assert "#define GRINDER_TCP_PEER_RECOVERY_COOLDOWN_MS 600000" in DRIVER
+    assert "GrinderTcpPeerRecoveryOnSessionClosed(reason, was_greeted, expected_close);" in DRIVER
+    assert "GrinderTcpPeerRecoveryOnHello();" in DRIVER
     ordered(
         DRIVER[DRIVER.index("void GrinderTcpStop(const char *reason)"):],
         "GrinderTcpRelayOff(reason);",
@@ -96,6 +102,28 @@ def main():
     assert "strcmp(bssid, GrinderTcpDiag.observed_bssid)" in RECOVERY
     assert "GrinderTcpDiag.network_generation += wifi_event_changes ? wifi_event_changes : 1;" in RECOVERY
     assert "GrinderTcpRestartServer(reason);" in RECOVERY
+    assert "GrinderTcpPeerRecoveryOnNetworkReady(reason);" in RECOVERY
+    assert "GRINDER_TCP_PEER_RECOVERY_WAIT_NETWORK" in DRIVER
+    assert "GRINDER_TCP_PEER_RECOVERY_VERIFY_HELLO" in DRIVER
+    hello = RECOVERY[RECOVERY.index("void GrinderTcpPeerRecoveryOnHello(void)"):RECOVERY.index("void GrinderTcpPeerRecoveryTick(void)")]
+    assert "GrinderTcpPeerRecovery.cooldown_until = 0;" not in hello
+    assert "TasmotaGlobal.ota_state_flag" in RECOVERY
+    tick = RECOVERY[RECOVERY.index("void GrinderTcpPeerRecoveryTick(void)"):]
+    assert "if (GrinderTcp.client_open)" not in tick[:tick.index("const uint32_t now = millis();")]
+    ordered(
+        RECOVERY[RECOVERY.index("void GrinderTcpPeerRecoveryTick(void)"):],
+        'GrinderTcpStop("peer_recovery");',
+        "WifiBegin(3, Settings->wifi_channel);",
+        "Wifi.counter = 1;",
+    )
+    loop = DRIVER[DRIVER.index("void GrinderTcpLoop(void)"):]
+    post_accept = loop[loop.index("GrinderTcpPollServer();"):]
+    ordered(
+        post_accept,
+        "GrinderTcpPollServer();",
+        "GrinderTcpReadClient();",
+        "GrinderTcpPeerRecoveryTick();",
+    )
     assert "GRINDER_TCP_MDNS_REFRESH" not in DRIVER
     assert "mdns_refresh_at" not in DRIVER
     assert "GrinderTcpAdvertise(refresh)" not in DRIVER
@@ -103,9 +131,9 @@ def main():
     assert "!authenticated" in DRIVER
     assert '"Grinder|Status|Diag|Restart"' in DIAGNOSTICS
     assert "void CmndGrinderDiag(void)" in DIAGNOSTICS
-    for key in ("Net", "TCP", "mDNS", "Relay", "Heap", "Loop", "Last", "Count"):
+    for key in ("Net", "TCP", "PeerRecovery", "mDNS", "Relay", "Heap", "Loop", "Last", "Count"):
         assert f'\\"{key}\\"' in DIAGNOSTICS
-    for key in ("WL", "Link", "Reason", "RecoveryMs", "MaxMs", "MaxGapMs", "WiFiDn", "LostIP", "GotIP"):
+    for key in ("WL", "Link", "Reason", "RecoveryMs", "CooldownMs", "NoPeer", "WiFiFail", "Outcome", "MaxMs", "MaxGapMs", "WiFiDn", "LostIP", "GotIP"):
         assert f'\\"{key}\\"' in DIAGNOSTICS
     assert "MdnsRefresh" not in DIAGNOSTICS
     assert "MdnsRefreshOk" not in DIAGNOSTICS

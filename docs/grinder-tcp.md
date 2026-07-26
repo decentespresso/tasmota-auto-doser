@@ -225,6 +225,8 @@ Every controlled listener restart forces `Power1 OFF`, revokes TCP ownership, cl
 
 Network callbacks recover immediately after Tasmota reports usable connectivity. A five-second identity check catches missed roam notifications, so an IP or BSSID change is detected within five seconds. mDNS registration is attempted when the listener starts and retried every five seconds after failure. While the relay is off and no authenticated client is active, the service is removed and re-added every 60 seconds. Maintenance never interrupts an authenticated grinder connection.
 
+Peer health is qualified separately from Wi-Fi status. After a usable network generation starts, the plug allows 15 seconds for a valid HDS `HELLO`. The same grace period starts after an unexpected established-session loss. If no valid `HELLO` arrives, the relay is forced off, TCP and the grinder mDNS service are stopped, and Tasmota performs one controlled Wi-Fi reassociation. The listener and advertisement are recreated by the normal network-up path. The incident cannot trigger a second attempt; subsequent incidents are rate-limited by a ten-minute global cooldown. A valid `HELLO` cancels pending recovery without clearing that cooldown and never restores relay power automatically.
+
 `GrinderRestart` runs the same fail-safe TCP and mDNS recreation path without rebooting the plug. It is intended for field diagnosis when the Web UI works but port `31980` does not.
 
 `GrinderStatus` returns one JSON object with these groups:
@@ -233,6 +235,7 @@ Network callbacks recover immediately after Tasmota reports usable connectivity.
 | --- | --- |
 | `Net` | connectivity, IP, subnet mask, gateway, BSSID, RSSI, network generation |
 | `TCP` | listener intent, server generation, client state, HELLO state, closing state, peer address, last receive age |
+| `PeerRecovery` | watchdog state, deadline and cooldown, attempts, outcomes, trigger, and suppression counters |
 | `mDNS` | advertisement and responder state |
 | `Relay` | TCP ownership and physical relay state |
 | `Heap` | current and minimum observed free heap |

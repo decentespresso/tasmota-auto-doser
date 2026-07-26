@@ -11,6 +11,50 @@ struct WifiEventSnapshotSim {
   bool ip_changed = false;
 };
 
+struct PeerRecoveryRateLimitSim {
+  uint32_t now = 100;
+  uint32_t cooldown_until = 0;
+  uint32_t attempts = 0;
+  bool waiting = false;
+
+  void Arm(void) {
+    waiting = true;
+  }
+
+  bool Attempt(void) {
+    if (!waiting || (cooldown_until && ((int32_t)(now - cooldown_until) < 0))) {
+      waiting = false;
+      return false;
+    }
+    attempts++;
+    cooldown_until = now + 600000;
+    return true;
+  }
+
+  void Hello(void) {
+    waiting = false;
+  }
+
+  void Advance(const uint32_t elapsed) {
+    now += elapsed;
+  }
+};
+
+static void TestPeerRecoveryHelloRetainsGlobalRateLimit(void) {
+  PeerRecoveryRateLimitSim sim;
+  sim.Arm();
+  assert(sim.Attempt());
+  sim.Hello();
+  sim.Arm();
+  sim.Advance(599999);
+  assert(!sim.Attempt());
+  assert(1 == sim.attempts);
+  sim.Advance(1);
+  sim.Arm();
+  assert(sim.Attempt());
+  assert(2 == sim.attempts);
+}
+
 struct WifiEventBridgeSim {
   WifiEventSnapshotSim pending;
   uint32_t now = 0;
