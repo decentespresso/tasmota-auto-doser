@@ -1,4 +1,4 @@
-# Tasmota Auto Doser Firmware
+# Tasmota Grind by Weight Firmware
 
 Decent Espresso firmware for controlling a grinder with a Tasmota Wi-Fi plug from an HDS scale over a small local TCP protocol.
 
