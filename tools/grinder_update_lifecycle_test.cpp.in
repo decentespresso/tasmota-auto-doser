@@ -1,0 +1,229 @@
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <initializer_list>
+
+#define PSTR(text) text
+#define POWER_MASK UINT32_MAX
+#define GRINDER_TCP_BUSY_CLOSE_SLOTS 4
+#define LOG_LEVEL_ERROR 1
+#define P_POWER_ON_DELAY2 0
+
+enum {
+  FUNC_PRE_INIT, FUNC_INIT, FUNC_NETWORK_UP, FUNC_LOOP, FUNC_NETWORK_DOWN,
+  FUNC_SAVE_BEFORE_RESTART, FUNC_COMMAND, FUNC_SET_POWER, FUNC_SET_DEVICE_POWER,
+  FUNC_ACTIVE, FUNC_ABOUT_TO_RESTART, FUNC_INTERRUPT_STOP, FUNC_INTERRUPT_START
+};
+
+enum { GPIO_REL1, POWER_OFF_FORCE, SRC_IGNORE };
+
+struct WiFiClient {
+  void stop() {}
+};
+
+struct GrinderTcpLineReader {};
+struct GrinderTcpPendingTx {
+  uint32_t length = 0, sent = 0, deadline = 0;
+  bool close_after = false;
+};
+struct GrinderTcpClosingClient {
+  WiFiClient client;
+  GrinderTcpPendingTx tx;
+  uint32_t close_at = 0;
+  bool open = false;
+};
+
+__DRIVER_STATE__
+
+struct {
+  uint32_t power = 0, last_power = 0, blink_mask = 0, rel_inverted = 0;
+  uint32_t pulse_timer[1] = {0};
+  uint32_t power_on_delay = 0, power_on_delay_state = 0;
+  uint8_t restart_flag = 0, ota_state_flag = 0;
+} TasmotaGlobal;
+
+struct SettingsData {
+  uint32_t power_lock = 0, power = 0;
+  uint32_t pulse_timer[1] = {0}, param[1] = {0};
+  struct { bool save_state = true; } flag;
+} settings;
+SettingsData *Settings = &settings;
+
+struct {
+  uint32_t server_stops = 0, server_starts = 0, server_generation = 0;
+  uint32_t active_remote_ip = 0, active_remote_port = 0;
+  uint32_t active_disconnects = 0;
+  char last_close_reason[24] = {};
+} GrinderTcpDiag;
+
+struct { bool upload_services_stopped = false; } Web;
+uint32_t output_power = 0, persisted_power = 0, client_polls = 0;
+bool network_usable = true;
+
+struct {
+  void begin() {}
+  void stop() {}
+  void setNoDelay(bool) {}
+} GrinderTcpServer;
+
+void GrinderTcpStart();
+bool Xdrv95(uint32_t);
+void XdrvXsnsCall(uint32_t function) { Xdrv95(function); }
+void XsnsXdrvCall(uint32_t function) { Xdrv95(function); }
+void SettingsSave(uint8_t) {
+  assert(output_power == 0);
+  persisted_power = Settings->power;
+}
+bool bitRead(uint32_t value, uint32_t bit) { return (value >> bit) & 1; }
+bool PinUsed(uint32_t, uint32_t) { return true; }
+void DigitalWrite(uint32_t, uint32_t, uint32_t value) { output_power = value; }
+void ExecuteCommandPower(uint32_t, uint32_t, uint32_t) { assert(output_power == 0); }
+bool GrinderTcpCacheIdentity() { return true; }
+bool GrinderTcpRelayHardwareSupported() { return true; }
+bool GrinderTcpNetworkUsable() { return network_usable; }
+void GrinderTcpRecordFailSafe(const char *) {}
+void GrinderTcpRecordEvent(const char *) {}
+void GrinderTcpRecordClose(const char *) {}
+void strlcpy(char *output, const char *input, size_t size) { std::snprintf(output, size, "%s", input); }
+void GrinderTcpLineReset(GrinderTcpLineReader *) {}
+void GrinderTcpRemoveMdnsService() {}
+void GrinderTcpAdvertise() {}
+void AddLogServerActive(const char *) {}
+template <typename... Args> void AddLog(Args...) {}
+void GrinderTcpPreInit() {}
+void GrinderTcpInit() {}
+void GrinderTcpApplyQuietSettings() {}
+void GrinderTcpNetworkUp() { GrinderTcpStart(); }
+void GrinderTcpNetworkDown() {}
+void GrinderTcpObservePower() {}
+bool GrinderTcpSetDevicePower() { return false; }
+const char kGrinderCommands[] = "";
+const char GrinderCommand[] = "";
+bool DecodeCommand(const char *, const char *) { return false; }
+void GrinderTcpObserveDiagnostics() {}
+void GrinderTcpCheckNetwork() {}
+void GrinderTcpFinishActiveClose() {}
+void GrinderTcpFinishClosingClients() {}
+void GrinderTcpFlushActiveTx() {}
+void GrinderTcpReadClient() { ++client_polls; }
+void GrinderTcpCheckTimeout() {}
+void GrinderTcpEnforceRelayOwnership() {}
+void GrinderTcpKeepAwakeWhileConnected() {}
+void GrinderTcpPollServer() { ++client_polls; }
+struct { bool begun = true; } Mdns;
+
+__PRODUCTION_FUNCTIONS__
+
+void Arm() {
+  GrinderTcp = {};
+  TasmotaGlobal = {};
+  settings = {};
+  Web = {};
+  output_power = 1;
+  persisted_power = 1;
+  client_polls = 0;
+  network_usable = true;
+  TasmotaGlobal.power = 1;
+  GrinderTcp.client_open = true;
+  GrinderTcp.greeted = true;
+  GrinderTcp.authorized_on = true;
+  GrinderTcp.server_started = true;
+  GrinderTcp.closing[0].open = true;
+}
+
+void AssertStopped() {
+  assert(output_power == 0);
+  assert(TasmotaGlobal.power == 0);
+  assert(!GrinderTcpRelayOwned());
+  assert(!GrinderTcp.client_open);
+  assert(!GrinderTcp.server_started);
+  assert(!GrinderTcp.closing[0].open);
+}
+
+void TestRestartSnapshotsOff() {
+  for (const uint8_t restart : {0, 2}) {
+    Arm();
+    TasmotaGlobal.restart_flag = restart;
+    XsnsXdrvCall(FUNC_ABOUT_TO_RESTART);
+    AssertStopped();
+    SettingsSaveAll();
+    assert(persisted_power == 0);
+    GrinderTcpStart();
+    Xdrv95(FUNC_NETWORK_UP);
+    AssertStopped();
+  }
+}
+
+void TestWebUploadFailureAndAbortRecoverOff() {
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    Arm();
+    UploadServices(0);
+    AssertStopped();
+    GrinderTcpStart();
+    Xdrv95(FUNC_NETWORK_UP);
+    Xdrv95(FUNC_LOOP);
+    AssertStopped();
+    assert(client_polls == 0);
+    UploadServices(1);
+    assert(GrinderTcp.server_started);
+    assert(!GrinderTcp.client_open);
+    assert(!GrinderTcpRelayOwned());
+    assert(output_power == 0);
+    const uint32_t starts = GrinderTcpDiag.server_starts;
+    UploadServices(1);
+    assert(GrinderTcpDiag.server_starts == starts);
+  }
+}
+
+void TestSuccessfulUploadCannotRearmBeforeRestart() {
+  Arm();
+  UploadServices(0);
+  UploadServices(1);
+  TasmotaGlobal.restart_flag = 2;
+  Xdrv95(FUNC_LOOP);
+  assert(client_polls == 0);
+  XsnsXdrvCall(FUNC_ABOUT_TO_RESTART);
+  SettingsSaveAll();
+  AssertStopped();
+  assert(persisted_power == 0);
+}
+
+void TestUrlUpdateLifecycle() {
+  for (const bool success : {false, true}) {
+    Arm();
+    TasmotaGlobal.ota_state_flag = 3;
+    Xdrv95(FUNC_LOOP);
+    assert(output_power == 0);
+    assert(client_polls == 0);
+    AllowInterrupts(false);
+    AssertStopped();
+    TasmotaGlobal.ota_state_flag = 0;
+    TasmotaGlobal.restart_flag = success ? 5 : 0;
+    AllowInterrupts(true);
+    assert(GrinderTcp.server_started == !success);
+    assert(!GrinderTcpRelayOwned());
+    assert(output_power == 0);
+  }
+}
+
+void TestResumeWithoutNetworkStaysOff() {
+  Arm();
+  UploadServices(0);
+  network_usable = false;
+  UploadServices(1);
+  AssertStopped();
+  network_usable = true;
+  Xdrv95(FUNC_NETWORK_UP);
+  assert(GrinderTcp.server_started);
+  assert(output_power == 0);
+  assert(!GrinderTcpRelayOwned());
+}
+
+int main() {
+  TestRestartSnapshotsOff();
+  TestWebUploadFailureAndAbortRecoverOff();
+  TestSuccessfulUploadCannotRearmBeforeRestart();
+  TestUrlUpdateLifecycle();
+  TestResumeWithoutNetworkStaysOff();
+  puts("grinder_update_lifecycle_test passed");
+}

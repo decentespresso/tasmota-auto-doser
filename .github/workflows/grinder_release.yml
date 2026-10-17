@@ -25,6 +25,7 @@ jobs:
           g++ -std=c++17 tools/grinder_tcp_driver_sim_test.cpp -o build/host-tests/grinder_tcp_driver_sim_test
           ./build/host-tests/grinder_tcp_protocol_test
           ./build/host-tests/grinder_tcp_driver_sim_test
+          python3 tools/test_grinder_update_lifecycle.py
 
   firmware:
     needs: host-tests
