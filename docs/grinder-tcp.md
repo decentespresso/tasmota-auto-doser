@@ -152,16 +152,20 @@ The scale stores the selected plug MAC, not the IP address. mDNS, hostname, and 
 
 `Grinder On` forces Wi-Fi on boot. From the normal weight view, hold both buttons for 500 ms to open the `Grinder Plug` menu when grinder mode is on. Use `Target g` there for quick dose changes.
 
-Default HDS settings:
+### HDS Settings
+
+HDS custom builds from [openScale v3.1.15 source](https://github.com/decentespresso/openscale/blob/22219ec71349a809a5f6fbf0a5ff43c4ec7e2c0b/include/grinder_runtime.h#L38-L49) with the `Grind by weight` feature included define these source defaults. A standard HDS release image can omit grinder support.
 
 ```text
 Grinder: Off
 Target: 15.0 g
-Safety: 0.2 g
+Safety: 2.0 g
 Zero range: -1.0 g to 1.0 g
 Zero hold: 1000 ms
 Target tolerance: 0.5 g
 ```
+
+Read the values on your installed HDS before the dry test. Saved settings and adaptive safety can differ from these source defaults; other HDS versions can also differ. The plug firmware does not select these values or enforce a weight cutoff.
 
 The HDS cutoff threshold is:
 
@@ -276,7 +280,7 @@ If the scale shows `grinder error`, it entered fail-safe mode. Common causes are
 
 If weighing must stay responsive while the plug is offline, do not run full discovery in the background. Runtime lookup should use only the saved IP and saved hostname with short timeouts. Full mDNS discovery belongs in manual `Select Plug`.
 
-If the scale does not rearm, remove the filled cup, return the empty cup, and wait until weight is stable inside zero range for the zero hold time. The default zero hold is 1000 ms.
+If the scale does not rearm, remove the filled cup, return the empty cup, and wait until weight is stable inside zero range for your configured zero hold time.
 
 USB serial grinder logs use these prefixes:
 
