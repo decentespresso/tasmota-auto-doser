@@ -35,6 +35,7 @@ jobs:
         variant:
           - tasmota32-nous-a6t-grinder
           - tasmota32-grinder
+          - tasmota32c3-athom-eu-v3-grinder
     steps:
       - uses: actions/checkout@v6
       - name: Set up Python

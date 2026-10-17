@@ -14,6 +14,7 @@ Use:
 
 - `tasmota32-nous-a6t-grinder.bin` for the tested NOUS A6T plug.
 - `tasmota32-grinder.bin` for validated classic ESP32 plugs with exactly one normal `Relay1`.
+- `tasmota32c3-athom-eu-v3-grinder.bin` for the Athom Tasmota ESP32-C3 EU Plug V3 (PG01V3), pending hardware validation.
 
 Before flashing, disconnect the grinder or use a harmless load. Back up the current Tasmota configuration, then upload the `.bin` file through the Tasmota web UI firmware upgrade page.
 
@@ -23,9 +24,10 @@ You also need HDS firmware with grinder support. The plug firmware only switches
 
 ## Supported Devices
 
-Supported now:
+Device-specific builds:
 
 - NOUS A6T, tested with the `tasmota32-nous-a6t-grinder` build.
+- Athom Tasmota ESP32-C3 EU Plug V3 (PG01V3, 4 MB flash), with the `tasmota32c3-athom-eu-v3-grinder` build; not hardware-tested here. Keep the factory Tasmota GPIO template and calibration settings when upgrading.
 
 Expected candidates:
 
@@ -35,7 +37,7 @@ Expected candidates:
 Not supported by the current builds:
 
 - ESP8266.
-- ESP32-C3, ESP32-S2, ESP32-S3, ESP32-C6.
+- Other ESP32-C3 devices, ESP32-S2, ESP32-S3, ESP32-C6.
 - Multi-relay, bistable relay, dimmer, shutter, and vendor-MCU relay devices.
 
 See [docs/grinder-tcp.md](docs/grinder-tcp.md) for the device evidence table and smoke tests.
@@ -81,11 +83,13 @@ The firmware still reports the upstream Tasmota base version plus the image name
 ## Build From Source
 
 ```powershell
+$env:PLATFORMIO_CORE_DIR = Join-Path $PWD '.pio-core-isolated'
 $env:PYTHONUTF8='1'
 $env:PYTHONIOENCODING='utf-8'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 pio run -e tasmota32-nous-a6t-grinder
 pio run -e tasmota32-grinder
+pio run -e tasmota32c3-athom-eu-v3-grinder
 ```
 
 The generated OTA files are written under `build_output/firmware`.
@@ -98,7 +102,7 @@ Maintainer releases are created from tags named like:
 v1.0.0
 ```
 
-The release workflow runs host protocol tests, builds the two grinder firmware images, uploads CI artifacts, and attaches only web-upload OTA `.bin` files plus `SHA256SUMS.txt` to the GitHub Release.
+The release workflow runs host protocol tests, builds the three grinder firmware images, uploads CI artifacts, and attaches only web-upload OTA `.bin` files plus `SHA256SUMS.txt` to the GitHub Release.
 
 See [docs/releasing.md](docs/releasing.md).
 

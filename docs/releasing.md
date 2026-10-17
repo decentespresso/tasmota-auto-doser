@@ -21,8 +21,8 @@ Before tagging:
 1. Confirm the branch is the intended public release state.
 2. Confirm `README.md` and `docs/grinder-tcp.md` match the supported hardware list.
 3. Run the host protocol and driver simulation tests.
-4. Build both firmware environments.
-5. Smoke-test the NOUS A6T image on real hardware with no grinder load.
+4. Build all three firmware environments.
+5. Smoke-test the NOUS A6T image on real hardware with no grinder load. Complete the Athom EU V3 hardware checklist before claiming hardware-tested support; otherwise retain its pending-validation status.
 6. Confirm Web/API `Power1 ON` cannot keep the relay on.
 7. Confirm TCP `HELLO`, `ON`, `OFF`, `!`, `STATE`, `BYE`, second-client `BUSY`, dropped-client fail-safe, and heartbeat timeout.
 
@@ -33,6 +33,7 @@ Normal releases attach:
 ```text
 tasmota32-nous-a6t-grinder.bin
 tasmota32-grinder.bin
+tasmota32c3-athom-eu-v3-grinder.bin
 SHA256SUMS.txt
 ```
 
@@ -50,4 +51,4 @@ git push origin development
 git push origin v1.0.0
 ```
 
-The workflow builds only the two grinder images and publishes the release when the tag build passes.
+The workflow builds only the three grinder images and publishes the release when the tag build passes.
