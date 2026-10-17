@@ -29,14 +29,15 @@ def main():
     source = template.replace("__PRODUCTION__", filesystem + "\n" + storage + "\n" + production)
     with tempfile.TemporaryDirectory() as directory:
         for target in ("ESP32", "ESP32C3", "ESP32S3", "ESP32S2", "ESP32C2", "ESP32C6", "ESP32P4", "ESP32C5"):
-            executable = Path(directory) / (target + (".exe" if os.name == "nt" else ""))
-            subprocess.run([
-                "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic",
-                "-DESP32", "-DUSE_UFILESYS", f"-DCONFIG_IDF_TARGET_{target}=1",
-                "-x", "c++", "-", "-o", str(executable),
-            ], input=source, text=True, check=True)
-            subprocess.run([str(executable)], check=True)
-            print(f"{target}: settings persistence checks passed", flush=True)
+            for mode in ([], ["-DFIRMWARE_MINIMAL"]):
+                executable = Path(directory) / (target + (".exe" if os.name == "nt" else ""))
+                subprocess.run([
+                    "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic",
+                    "-DESP32", "-DUSE_UFILESYS", f"-DCONFIG_IDF_TARGET_{target}=1", *mode,
+                    "-x", "c++", "-", "-o", str(executable),
+                ], input=source, text=True, check=True)
+                subprocess.run([str(executable)], check=True)
+                print(f"{target} {mode}: settings persistence checks passed", flush=True)
 
 
 if __name__ == "__main__":

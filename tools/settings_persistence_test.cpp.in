@@ -112,13 +112,13 @@ uint8_t architecture() {
 #endif
 }
 
-std::vector<uint8_t> configuration(uint32_t calibration = 123456) {
+std::vector<uint8_t> configuration(uint32_t calibration = 123456, uint8_t arch = architecture()) {
   TSettings value = {};
   value.cfg_holder = CFG_HOLDER;
   value.cfg_size = sizeof(value);
   value.save_flag = 42;
   value.version = 0x0F050001;
-  value.config_version = architecture();
+  value.config_version = arch;
   value.calibration[0] = calibration;
   value.calibration[1] = 98765;
   value.calibration[2] = 54321;
@@ -135,6 +135,20 @@ void expect_loaded(const std::vector<uint8_t> &expected) {
   assert(defaults == 0);
   assert(settings_location == 1);
   assert(std::memcmp(&settings, expected.data(), expected.size()) == 0);
+}
+
+void expect_rejected() {
+  settings_location = 1;
+  SettingsLoad();
+#ifdef FIRMWARE_MINIMAL
+  const TSettings empty = {};
+  assert(defaults == 0);
+  assert(settings_location == 0);
+  assert(std::memcmp(&settings, &empty, sizeof(settings)) == 0);
+#else
+  assert(defaults == 1);
+#endif
+  defaults = 0;
 }
 
 int main() {
@@ -159,26 +173,27 @@ int main() {
   nvs = {uint8_t(CFG_HOLDER & 255), uint8_t(CFG_HOLDER >> 8)};
   expect_loaded(valid);
   files[TASM_FILE_SETTINGS_LKG][25] ^= 1;
-  settings_location = 1;
-  SettingsLoad();
-  assert(defaults == 1);
-  defaults = 0;
+  expect_rejected();
   files.clear();
   nvs = valid;
-  nvs[0xF36] = architecture() == 1 ? 4 : 1;
+  nvs[0xF36] = architecture() == 4 ? 3 : (architecture() == 1 || architecture() == 2 ? 4 : 2);
   const auto wrong_arch_crc = GetCfgCrc32(nvs.data(), nvs.size() - 4);
   std::memcpy(nvs.data() + nvs.size() - 4, &wrong_arch_crc, 4);
-  SettingsLoad();
-  assert(defaults == 1);
-  defaults = 0;
+  expect_rejected();
+#if CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C3
+  nvs = configuration(123456, 1);
+  expect_loaded(nvs);
+#endif
 #if CONFIG_IDF_TARGET_ESP32C3
+  nvs = configuration(123456, 2);
+  expect_loaded(nvs);
   nvs = valid;
   nvs.resize(4032);
   const uint16_t old_size = nvs.size();
   const uint32_t old_version = 0x09040000;
   std::memcpy(nvs.data() + 2, &old_size, 2);
   std::memcpy(nvs.data() + 8, &old_version, 4);
-  nvs[0xF36 - 64] = 4;
+  nvs[0xF36 - 64] = 1;
   const auto old_crc = GetCfgCrc32(nvs.data(), nvs.size() - 4);
   std::memcpy(nvs.data() + nvs.size() - 4, &old_crc, 4);
   expect_loaded(nvs);

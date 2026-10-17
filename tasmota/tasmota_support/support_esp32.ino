@@ -102,7 +102,7 @@ size_t NvmLoad(const char *sNvsName, const char *sName, void *pSettings, unsigne
   esp_err_t result = nvs_open(sNvsName, NVS_READONLY, &handle);
   if (result != ESP_OK) {
     AddLog(LOG_LEVEL_DEBUG, PSTR("NVS: Error %d"), result);
-    return false;
+    return 0;
   }
   size_t size = nSettingsLen;
   result = nvs_get_blob(handle, sName, pSettings, &size);
@@ -212,7 +212,14 @@ bool SettingsConfigValid(const void *data, size_t size) {
 #else
   const uint8_t architecture = 1;
 #endif
-  return ((const uint8_t*)data)[offsetof(TSettings, config_version) - (sizeof(TSettings) - size)] == architecture;
+  const uint8_t stored_architecture = ((const uint8_t*)data)[offsetof(TSettings, config_version) - (sizeof(TSettings) - size)];
+#if CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C3
+  if (1 == stored_architecture) { return true; }
+#endif
+#if CONFIG_IDF_TARGET_ESP32C3
+  if (2 == stored_architecture) { return true; }
+#endif
+  return stored_architecture == architecture;
 }
 
 #ifdef USE_UFILESYS
@@ -240,6 +247,7 @@ uint32_t SettingsRead(void *data, size_t size) {
     return 3;
   }
 #endif
+  memset(data, 0, size);
   return 0;
 }
 
