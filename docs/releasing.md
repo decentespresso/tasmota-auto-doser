@@ -55,4 +55,6 @@ The workflow builds only the three grinder images and publishes the release when
 
 The workflow uploads the complete firmware and checksum set to a draft, downloads it to verify the bytes, then publishes it. A failed upload or verification leaves the release as a draft; rerun the workflow for the same tag to retry.
 
+The workflow's `GRINDER_VARIANTS` declaration supplies both the build matrix and the expected publication filenames. Add future supported builds there once.
+
 An identical rerun of a published release makes no changes. If its assets differ or are incomplete, the workflow stops without replacing them; publish changed firmware under a new version tag.

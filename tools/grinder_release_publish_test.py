@@ -10,6 +10,11 @@ from unittest.mock import patch
 FIRMWARE = ("tasmota32-grinder.bin", "tasmota32-nous-a6t-grinder.bin")
 
 
+def workflow_variants(workflow):
+    declaration = next(line for line in workflow.splitlines() if line.startswith("  GRINDER_VARIANTS: "))
+    return declaration.split(": ", 1)[1][1:-1]
+
+
 class GhStub:
     def __init__(self, directory, exists=False, draft=True, fail_upload=False):
         self.directory = directory
@@ -150,6 +155,38 @@ class ReleasePublicationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unexpected"):
             self.publish()
         self.assertTrue(self.gh.draft)
+
+    def test_workflow_matrix_and_publisher_share_two_or_three_variants(self):
+        from grinder_release_publish import main
+
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/grinder_release.yml").read_text()
+        declared_json = workflow_variants(workflow)
+        development = tuple(name.removesuffix(".bin") for name in FIRMWARE)
+        overlays = (json.loads(declared_json), development, (*development, "tasmota32c3-athom-eu-v3-grinder"))
+        for index, overlay in enumerate(overlays):
+            with self.subTest(variants=len(overlay)):
+                overlay_workflow = workflow.replace(declared_json, json.dumps(overlay))
+                self.assertIn('run: echo "variants=$GRINDER_VARIANTS" >> "$GITHUB_OUTPUT"', overlay_workflow)
+                self.assertIn("variants: ${{ steps.variants.outputs.variants }}", overlay_workflow)
+                self.assertIn("variant: ${{ fromJSON(needs.host-tests.outputs.variants) }}", overlay_workflow)
+                self.assertIn('release "$GRINDER_VARIANTS"', overlay_workflow)
+                local = Path(self.temporary.name) / f"local-{index}"
+                remote = Path(self.temporary.name) / f"remote-{index}"
+                local.mkdir()
+                remote.mkdir()
+                expected = {f"{variant}.bin" for variant in overlay}
+                for name in expected:
+                    (local / name).write_bytes(name.encode("ascii"))
+                stub = GhStub(remote)
+                arguments = ("publisher", "owner/repository", "v1.0.0", str(local), workflow_variants(overlay_workflow))
+                with patch("sys.argv", list(arguments)), patch("subprocess.run", stub):
+                    main()
+                self.assertFalse(stub.draft)
+                self.assertEqual({path.name for path in remote.iterdir()}, {*expected, "SHA256SUMS.txt"})
+                self.assertEqual(
+                    {line.split("  ", 1)[1] for line in (remote / "SHA256SUMS.txt").read_text().splitlines()},
+                    expected,
+                )
 
 
 if __name__ == "__main__":

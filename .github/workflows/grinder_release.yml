@@ -13,11 +13,18 @@ concurrency:
   group: grinder-release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  GRINDER_VARIANTS: '["tasmota32-nous-a6t-grinder", "tasmota32-grinder", "tasmota32c3-athom-eu-v3-grinder"]'
+
 jobs:
   host-tests:
     runs-on: ubuntu-latest
+    outputs:
+      variants: ${{ steps.variants.outputs.variants }}
     steps:
       - uses: actions/checkout@v6
+      - id: variants
+        run: echo "variants=$GRINDER_VARIANTS" >> "$GITHUB_OUTPUT"
       - name: Build and run grinder host tests
         run: |
           mkdir -p build/host-tests
@@ -34,10 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant:
-          - tasmota32-nous-a6t-grinder
-          - tasmota32-grinder
-          - tasmota32c3-athom-eu-v3-grinder
+        variant: ${{ fromJSON(needs.host-tests.outputs.variants) }}
     steps:
       - uses: actions/checkout@v6
       - name: Set up Python
@@ -84,7 +88,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
-        run: |
-          python3 -B tools/grinder_release_publish.py "$GITHUB_REPOSITORY" "$TAG_NAME" release \
-            tasmota32-nous-a6t-grinder.bin \
-            tasmota32-grinder.bin
+        run: python3 -B tools/grinder_release_publish.py "$GITHUB_REPOSITORY" "$TAG_NAME" release "$GRINDER_VARIANTS"

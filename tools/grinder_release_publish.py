@@ -70,10 +70,11 @@ def main():
     parser.add_argument("repository")
     parser.add_argument("tag")
     parser.add_argument("directory", type=Path)
-    parser.add_argument("firmware", nargs="+")
+    parser.add_argument("variants", type=json.loads)
     arguments = parser.parse_args()
     try:
-        publish(arguments.repository, arguments.tag, arguments.directory, arguments.firmware)
+        firmware = tuple(f"{variant}.bin" for variant in arguments.variants)
+        publish(arguments.repository, arguments.tag, arguments.directory, firmware)
     except subprocess.CalledProcessError as error:
         parser.exit(1, error.stderr or f"{error}\n")
     except (OSError, ValueError) as error:
