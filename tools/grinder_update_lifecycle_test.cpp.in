@@ -1,13 +1,37 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <initializer_list>
+#include <string>
 
+#define ESP32
 #define PSTR(text) text
+#define snprintf_P snprintf
 #define POWER_MASK UINT32_MAX
 #define GRINDER_TCP_BUSY_CLOSE_SLOTS 4
 #define LOG_LEVEL_ERROR 1
+#define LOG_LEVEL_INFO 2
+#define LOG_LEVEL_DEBUG 3
 #define P_POWER_ON_DELAY2 0
+#define HTTP_UPLOAD_BUFLEN 2048
+#define HTTP_OTA_RESTART_RECONNECT_TIME 0
+#define HTTP_RESTART_RECONNECT_TIME 0
+#define D_LOG_HTTP ""
+#define D_LOG_UPLOAD ""
+#define D_LOG_APPLICATION ""
+#define D_FILE ""
+#define D_SUCCESSFUL ""
+#define D_FAILED ""
+#define D_UPLOAD ""
+#define D_UPLOAD_DONE ""
+#define D_UPLOAD_ERROR_CODE ""
+#define D_INFORMATION ""
+#define D_RESTART ""
+#define HTTP_SCRIPT_RELOAD_TIME ""
+#define HTTP_MSG_RSTRT ""
+#define DEBUG_CORE_LOG(...) ((void)0)
 
 enum {
   FUNC_PRE_INIT, FUNC_INIT, FUNC_NETWORK_UP, FUNC_LOOP, FUNC_NETWORK_DOWN,
@@ -16,6 +40,9 @@ enum {
 };
 
 enum { GPIO_REL1, POWER_OFF_FORCE, SRC_IGNORE };
+enum { UPL_NONE, UPL_TASMOTA, UPL_SETTINGS, UPL_UFSFILE };
+enum { UPLOAD_FILE_START, UPLOAD_FILE_WRITE, UPLOAD_FILE_END, UPLOAD_FILE_ABORTED };
+enum { COL_TEXT_WARNING, COL_TEXT_SUCCESS, BUTTON_MAIN, SRC_WEBGUI };
 
 struct WiFiClient {
   void stop() {}
@@ -40,13 +67,15 @@ struct {
   uint32_t pulse_timer[1] = {0};
   uint32_t power_on_delay = 0, power_on_delay_state = 0;
   uint8_t restart_flag = 0, ota_state_flag = 0;
+  bool stop_flash_rotate = false;
 } TasmotaGlobal;
 
 struct SettingsData {
   uint32_t power_lock = 0, power = 0;
   uint32_t pulse_timer[1] = {0}, param[1] = {0};
-  struct { bool save_state = true; } flag;
+  struct { bool save_state = true, stop_flash_rotate = false; } flag;
 } settings;
+using TSettings = SettingsData;
 SettingsData *Settings = &settings;
 
 struct {
@@ -56,9 +85,71 @@ struct {
   char last_close_reason[24] = {};
 } GrinderTcpDiag;
 
-struct { bool upload_services_stopped = false; } Web;
+struct {
+  bool upload_services_stopped = false;
+  uint32_t upload_file_type = UPL_TASMOTA, upload_error = 0, config_block_count = 0;
+} Web;
 uint32_t output_power = 0, persisted_power = 0, client_polls = 0;
 bool network_usable = true;
+bool update_write_success = true, update_end_success = true;
+uint32_t update_writes = 0, restarts = 0;
+
+struct HTTPUpload {
+  uint32_t status = UPLOAD_FILE_START, totalSize = 0, currentSize = 32;
+  std::string filename = "grinder.bin";
+  uint8_t buf[32] = {0xE9};
+} upload;
+struct FakeWebserver {
+  HTTPUpload &upload() { return ::upload; }
+  bool hasArg(const char *) { return true; }
+  void sendHeader(const char *, const char *, bool) {}
+  void send(int, const char *, const char *) {}
+} webserver;
+FakeWebserver *Webserver = &webserver;
+struct { uint32_t getFreeSketchSpace() { return 65536; } } ESP;
+bool GrinderTcpRelayOwned();
+struct {
+  bool begin(uint32_t) { assert(output_power == 0); return true; }
+  size_t write(uint8_t *, size_t size) {
+    assert(output_power == 0);
+    assert(!GrinderTcpRelayOwned());
+    ++update_writes;
+    return update_write_success ? size : 0;
+  }
+  bool end(bool = false) { assert(output_power == 0); return update_end_success; }
+} Update;
+uint32_t settings_size = sizeof(TSettings);
+uint8_t settings_buffer[sizeof(TSettings)] = {};
+const char kUploadErrors[] = "";
+bool HttpCheckPriviledgedAccess(bool = true) { return true; }
+void WebGetArg(const char *name, char *value, size_t size) {
+  std::snprintf(value, size, "%s", std::string(name) == "u4" ? "fct" : "32");
+}
+bool SettingsBufferAlloc(uint32_t) { return true; }
+bool SettingsConfigRestore() { return true; }
+void SettingsBufferFree() {}
+void delay(uint32_t) {}
+void OsWatchLoop() {}
+void WifiConfigCounter() {}
+void WSContentStart_P(const char *) {}
+void WSContentSendStyle() {}
+void WSContentSpaceButton(uint32_t) {}
+void WSContentStop() {}
+void ShowWebSource(uint32_t) {}
+template <typename... Args> void WSContentSend_P(Args...) {}
+uint32_t WebColor(uint32_t) { return 0; }
+void GetTextIndexed(char *value, size_t size, uint32_t, const char *) {
+  std::snprintf(value, size, "error");
+}
+bool EspSingleOtaPartition() { return true; }
+bool EspRunningFactoryPartition() { return false; }
+void EspPrepRestartToSafeBoot() { assert(persisted_power == 0); }
+void EspRestart() { assert(output_power == 0); ++restarts; }
+void WSReturnSimpleString(const char *) {}
+void WebRestart(uint32_t) { assert(false); }
+struct esp_partition_t {};
+const esp_partition_t *esp_ota_get_next_update_partition(void *) { return nullptr; }
+void esp_ota_set_boot_partition(const void *) {}
 
 struct {
   void begin() {}
@@ -123,6 +214,11 @@ void Arm() {
   persisted_power = 1;
   client_polls = 0;
   network_usable = true;
+  upload = {};
+  update_write_success = true;
+  update_end_success = true;
+  update_writes = 0;
+  restarts = 0;
   TasmotaGlobal.power = 1;
   GrinderTcp.client_open = true;
   GrinderTcp.greeted = true;
@@ -141,6 +237,11 @@ void AssertStopped() {
 }
 
 void TestRestartSnapshotsOff() {
+  Arm();
+  HandleSwitchBootPartition();
+  AssertStopped();
+  assert(restarts == 1);
+  assert(persisted_power == 0);
   for (const uint8_t restart : {0, 2}) {
     Arm();
     TasmotaGlobal.restart_flag = restart;
@@ -155,16 +256,23 @@ void TestRestartSnapshotsOff() {
 }
 
 void TestWebUploadFailureAndAbortRecoverOff() {
-  for (int attempt = 0; attempt < 2; ++attempt) {
+  for (const uint32_t terminal : {UPLOAD_FILE_ABORTED, UPLOAD_FILE_END}) {
     Arm();
-    UploadServices(0);
+    HandleUploadLoop();
     AssertStopped();
     GrinderTcpStart();
     Xdrv95(FUNC_NETWORK_UP);
     Xdrv95(FUNC_LOOP);
     AssertStopped();
     assert(client_polls == 0);
-    UploadServices(1);
+    upload.status = UPLOAD_FILE_WRITE;
+    HandleUploadLoop();
+    assert(update_writes == 1);
+    update_end_success = false;
+    upload.status = terminal;
+    HandleUploadLoop();
+    HandleUploadDone();
+    assert(TasmotaGlobal.restart_flag == 0);
     assert(GrinderTcp.server_started);
     assert(!GrinderTcp.client_open);
     assert(!GrinderTcpRelayOwned());
@@ -177,15 +285,35 @@ void TestWebUploadFailureAndAbortRecoverOff() {
 
 void TestSuccessfulUploadCannotRearmBeforeRestart() {
   Arm();
-  UploadServices(0);
-  UploadServices(1);
-  TasmotaGlobal.restart_flag = 2;
+  HandleUploadLoop();
+  upload.status = UPLOAD_FILE_WRITE;
+  HandleUploadLoop();
+  upload.status = UPLOAD_FILE_END;
+  HandleUploadLoop();
+  HandleUploadDone();
+  assert(TasmotaGlobal.restart_flag == 2);
   Xdrv95(FUNC_LOOP);
   assert(client_polls == 0);
   XsnsXdrvCall(FUNC_ABOUT_TO_RESTART);
   SettingsSaveAll();
   AssertStopped();
   assert(persisted_power == 0);
+}
+
+void TestFailedWriteRecoversOff() {
+  Arm();
+  HandleUploadLoop();
+  update_write_success = false;
+  upload.status = UPLOAD_FILE_WRITE;
+  HandleUploadLoop();
+  assert(Web.upload_error != 0);
+  upload.status = UPLOAD_FILE_END;
+  HandleUploadLoop();
+  HandleUploadDone();
+  assert(TasmotaGlobal.restart_flag == 0);
+  assert(GrinderTcp.server_started);
+  assert(!GrinderTcpRelayOwned());
+  assert(output_power == 0);
 }
 
 void TestUrlUpdateLifecycle() {
@@ -223,6 +351,7 @@ int main() {
   TestRestartSnapshotsOff();
   TestWebUploadFailureAndAbortRecoverOff();
   TestSuccessfulUploadCannotRearmBeforeRestart();
+  TestFailedWriteRecoversOff();
   TestUrlUpdateLifecycle();
   TestResumeWithoutNetworkStaysOff();
   puts("grinder_update_lifecycle_test passed");

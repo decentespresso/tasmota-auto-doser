@@ -30,7 +30,10 @@ def main():
     )]
     functions += [function(support, "void AllowInterrupts("),
                   function(settings, "void SettingsSaveAll("),
-                  function(web, "void UploadServices(")]
+                  function(web, "void UploadServices("),
+                  function(web, "void HandleUploadLoop("),
+                  function(web, "void HandleUploadDone("),
+                  function(web, "void HandleSwitchBootPartition(")]
     template = (ROOT / "tools/grinder_update_lifecycle_test.cpp.in").read_text(encoding="utf-8")
     source = template.replace("__DRIVER_STATE__", driver[state_start:state_end])
     source = source.replace("__PRODUCTION_FUNCTIONS__", "\n\n".join(functions))
