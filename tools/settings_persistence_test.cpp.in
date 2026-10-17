@@ -1,0 +1,186 @@
+#include <algorithm>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <map>
+#include <string>
+#include <vector>
+
+#define PSTR(value) value
+#define D_LOG_CONFIG "CFG: "
+#define D_COUNT "Count"
+#define CFG_HOLDER 4617
+#define TASM_FILE_SETTINGS "/.settings"
+#define TASM_FILE_SETTINGS_LKG "/.settings.lkg"
+
+constexpr int LOG_LEVEL_DEBUG = 4;
+constexpr int LOG_LEVEL_DEBUG_MORE = 5;
+constexpr int LOG_LEVEL_INFO = 2;
+constexpr int ESP_OK = 0;
+constexpr int NVS_READONLY = 0;
+using nvs_handle_t = int;
+using esp_err_t = int;
+
+struct TSettings {
+  uint16_t cfg_holder;
+  uint16_t cfg_size;
+  uint32_t save_flag;
+  uint32_t version;
+  uint32_t header;
+  uint32_t calibration[3];
+  uint32_t relay_template;
+  uint8_t body[0xF36 - 32];
+  uint8_t config_version;
+  uint8_t tail[0xFFC - 0xF37];
+  uint32_t cfg_crc32;
+};
+static_assert(sizeof(TSettings) == 4096);
+TSettings settings = {};
+auto Settings = &settings;
+uint32_t settings_location = 1;
+uint32_t settings_crc32 = 0;
+unsigned defaults = 0;
+unsigned file_read_limit = 4096;
+int nvs_result = ESP_OK;
+std::map<std::string, std::vector<uint8_t>> files;
+std::vector<uint8_t> nvs;
+std::vector<std::string> logs;
+
+template<typename... Args>
+void AddLog(int, const char *format, Args...) { logs.emplace_back(format); }
+void SettingsDefault() { ++defaults; settings = {}; }
+void RtcSettingsLoad(unsigned) {}
+uint32_t GetCfgCrc32(uint8_t *, uint32_t);
+uint32_t GetSettingsCrc32();
+bool SettingsConfigValid(const void *, size_t);
+uint32_t SettingsRead(void *, size_t);
+
+class File {
+  const std::vector<uint8_t> *data;
+public:
+  explicit File(const std::vector<uint8_t> *value) : data(value) {}
+  explicit operator bool() const { return data != nullptr; }
+  size_t size() const { return data->size(); }
+  size_t read(uint8_t *buffer, size_t length) {
+    const auto count = std::min({length, data->size(), size_t(file_read_limit)});
+    std::memcpy(buffer, data->data(), count);
+    return count;
+  }
+  void close() {}
+};
+struct Filesystem {
+  File open(const char *name, const char *) {
+    const auto found = files.find(name);
+    return File(found == files.end() ? nullptr : &found->second);
+  }
+} filesystem;
+auto ffsp = &filesystem;
+unsigned ffs_type = 1;
+uint32_t TfsFileSize(const char *name) {
+  const auto found = files.find(name);
+  return found == files.end() ? 0 : found->second.size();
+}
+int nvs_open(const char *, int, nvs_handle_t *handle) { *handle = 1; return ESP_OK; }
+int nvs_get_blob(nvs_handle_t, const char *, void *buffer, size_t *size) {
+  if (nvs_result != ESP_OK || nvs.empty() || nvs.size() > *size) { return -1; }
+  std::memcpy(buffer, nvs.data(), nvs.size());
+  *size = nvs.size();
+  return ESP_OK;
+}
+void nvs_close(nvs_handle_t) {}
+
+__PRODUCTION__
+
+uint8_t architecture() {
+#if CONFIG_IDF_TARGET_ESP32S3
+  return 2;
+#elif CONFIG_IDF_TARGET_ESP32S2
+  return 3;
+#elif CONFIG_IDF_TARGET_ESP32C3
+  return 4;
+#elif CONFIG_IDF_TARGET_ESP32C2
+  return 5;
+#elif CONFIG_IDF_TARGET_ESP32C6
+  return 6;
+#elif CONFIG_IDF_TARGET_ESP32P4
+  return 7;
+#elif CONFIG_IDF_TARGET_ESP32C5
+  return 8;
+#else
+  return 1;
+#endif
+}
+
+std::vector<uint8_t> configuration(uint32_t calibration = 123456) {
+  TSettings value = {};
+  value.cfg_holder = CFG_HOLDER;
+  value.cfg_size = sizeof(value);
+  value.save_flag = 42;
+  value.version = 0x0F050001;
+  value.config_version = architecture();
+  value.calibration[0] = calibration;
+  value.calibration[1] = 98765;
+  value.calibration[2] = 54321;
+  value.relay_template = 0x1234;
+  value.cfg_crc32 = GetCfgCrc32(reinterpret_cast<uint8_t *>(&value), sizeof(value) - 4);
+  const auto bytes = reinterpret_cast<const uint8_t *>(&value);
+  return {bytes, bytes + sizeof(value)};
+}
+
+void expect_loaded(const std::vector<uint8_t> &expected) {
+  settings = {};
+  settings_location = 1;
+  SettingsLoad();
+  assert(defaults == 0);
+  assert(settings_location == 1);
+  assert(std::memcmp(&settings, expected.data(), expected.size()) == 0);
+}
+
+int main() {
+  const auto valid = configuration();
+  nvs = valid;
+  files[TASM_FILE_SETTINGS] = {uint8_t(CFG_HOLDER & 255), uint8_t(CFG_HOLDER >> 8)};
+  expect_loaded(valid);
+  files[TASM_FILE_SETTINGS] = valid;
+  files[TASM_FILE_SETTINGS][20] ^= 1;
+  expect_loaded(valid);
+  files[TASM_FILE_SETTINGS] = valid;
+  file_read_limit = 20;
+  expect_loaded(valid);
+  file_read_limit = 4096;
+  files[TASM_FILE_SETTINGS] = valid;
+  nvs_result = -1;
+  expect_loaded(valid);
+  files.erase(TASM_FILE_SETTINGS);
+  files[TASM_FILE_SETTINGS_LKG] = valid;
+  expect_loaded(valid);
+  nvs_result = ESP_OK;
+  nvs = {uint8_t(CFG_HOLDER & 255), uint8_t(CFG_HOLDER >> 8)};
+  expect_loaded(valid);
+  files[TASM_FILE_SETTINGS_LKG][25] ^= 1;
+  settings_location = 1;
+  SettingsLoad();
+  assert(defaults == 1);
+  defaults = 0;
+  files.clear();
+  nvs = valid;
+  nvs[0xF36] = architecture() == 1 ? 4 : 1;
+  const auto wrong_arch_crc = GetCfgCrc32(nvs.data(), nvs.size() - 4);
+  std::memcpy(nvs.data() + nvs.size() - 4, &wrong_arch_crc, 4);
+  SettingsLoad();
+  assert(defaults == 1);
+  defaults = 0;
+#if CONFIG_IDF_TARGET_ESP32C3
+  nvs = valid;
+  nvs.resize(4032);
+  const uint16_t old_size = nvs.size();
+  const uint32_t old_version = 0x09040000;
+  std::memcpy(nvs.data() + 2, &old_size, 2);
+  std::memcpy(nvs.data() + 8, &old_version, 4);
+  nvs[0xF36 - 64] = 4;
+  const auto old_crc = GetCfgCrc32(nvs.data(), nvs.size() - 4);
+  std::memcpy(nvs.data() + nvs.size() - 4, &old_crc, 4);
+  expect_loaded(nvs);
+#endif
+}

@@ -97,7 +97,7 @@ bool NvmExists(const char *sNvsName) {
   return true;
 }
 
-bool NvmLoad(const char *sNvsName, const char *sName, void *pSettings, unsigned nSettingsLen) {
+size_t NvmLoad(const char *sNvsName, const char *sName, void *pSettings, unsigned nSettingsLen) {
   nvs_handle_t handle;
   esp_err_t result = nvs_open(sNvsName, NVS_READONLY, &handle);
   if (result != ESP_OK) {
@@ -105,9 +105,9 @@ bool NvmLoad(const char *sNvsName, const char *sName, void *pSettings, unsigned 
     return false;
   }
   size_t size = nSettingsLen;
-  nvs_get_blob(handle, sName, pSettings, &size);
+  result = nvs_get_blob(handle, sName, pSettings, &size);
   nvs_close(handle);
-  return true;
+  return (ESP_OK == result) ? size : 0;
 }
 
 void NvmSave(const char *sNvsName, const char *sName, const void *pSettings, unsigned nSettingsLen) {
@@ -178,15 +178,68 @@ void SettingsErase(uint8_t type) {
   }
 }
 
+bool SettingsConfigValid(const void *data, size_t size) {
+  if (size < 16 || size > sizeof(TSettings)) { return false; }
+  const TSettings *candidate = (const TSettings*)data;
+  if (candidate->cfg_holder != (uint16_t)CFG_HOLDER || candidate->cfg_size != size || candidate->version <= 0x0606000A) {
+    return false;
+  }
+  if (size != sizeof(TSettings)) {
+#if CONFIG_IDF_TARGET_ESP32C3
+    if (size != sizeof(TSettings) - 64 || candidate->version >= 0x09050002) { return false; }
+#else
+    return false;
+#endif
+  }
+  uint32_t crc;
+  memcpy(&crc, (const uint8_t*)data + size - 4, sizeof(crc));
+  if (crc != GetCfgCrc32((uint8_t*)data, size - 4)) { return false; }
+  if (candidate->version < 0x08020004) { return true; }
+#if CONFIG_IDF_TARGET_ESP32S3
+  const uint8_t architecture = 2;
+#elif CONFIG_IDF_TARGET_ESP32S2
+  const uint8_t architecture = 3;
+#elif CONFIG_IDF_TARGET_ESP32C3
+  const uint8_t architecture = 4;
+#elif CONFIG_IDF_TARGET_ESP32C2
+  const uint8_t architecture = 5;
+#elif CONFIG_IDF_TARGET_ESP32C6
+  const uint8_t architecture = 6;
+#elif CONFIG_IDF_TARGET_ESP32P4
+  const uint8_t architecture = 7;
+#elif CONFIG_IDF_TARGET_ESP32C5
+  const uint8_t architecture = 8;
+#else
+  const uint8_t architecture = 1;
+#endif
+  return ((const uint8_t*)data)[offsetof(TSettings, config_version) - (sizeof(TSettings) - size)] == architecture;
+}
+
+#ifdef USE_UFILESYS
+bool SettingsReadFile(const char *filename, void *data, size_t size) {
+  const size_t file_size = TfsFileSize(filename);
+  if (!file_size || file_size > size) { return false; }
+  memset(data, 0, size);
+  return TfsLoadFile(filename, (uint8_t*)data, file_size) && SettingsConfigValid(data, file_size);
+}
+#endif
+
 uint32_t SettingsRead(void *data, size_t size) {
 #ifdef USE_UFILESYS
-  if (TfsLoadFile(TASM_FILE_SETTINGS, (uint8_t*)data, size)) {
+  if (SettingsReadFile(TASM_FILE_SETTINGS, data, size)) {
     return 2;
   }
 #endif
-  if (NvmLoad("main", "Settings", data, size)) {
+  memset(data, 0, size);
+  const size_t nvs_size = NvmLoad("main", "Settings", data, size);
+  if (SettingsConfigValid(data, nvs_size)) {
     return 1;
-  };
+  }
+#ifdef USE_UFILESYS
+  if (SettingsReadFile(TASM_FILE_SETTINGS_LKG, data, size)) {
+    return 3;
+  }
+#endif
   return 0;
 }
 

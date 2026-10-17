@@ -841,10 +841,10 @@ void SettingsLoad(void) {
 
 #ifdef ESP32
   uint32_t source = SettingsRead(Settings, sizeof(TSettings));
+  settings_location = source ? 1 : 0;
   if (source) {
-    settings_location = 1;
     if (Settings->cfg_holder == (uint16_t)CFG_HOLDER) {
-      AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_CONFIG "Loaded from %s, " D_COUNT " %lu"), (2 == source)?"File":"NVS", Settings->save_flag);
+      AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_CONFIG "Loaded from %s, " D_COUNT " %lu"), (2 == source)?"File":(3 == source)?"LKG File":"NVS", Settings->save_flag);
     }
   }
 #endif  // ESP32
@@ -852,7 +852,7 @@ void SettingsLoad(void) {
 #ifndef FIRMWARE_MINIMAL
   if ((0 == settings_location) || (Settings->cfg_holder != (uint16_t)CFG_HOLDER)) {  // Init defaults if cfg_holder differs from user settings in my_user_config.h
 //  if ((0 == settings_location) || (Settings->cfg_size != sizeof(TSettings)) || (Settings->cfg_holder != (uint16_t)CFG_HOLDER)) {  // Init defaults if cfg_holder differs from user settings in my_user_config.h
-#ifdef USE_UFILESYS
+#if defined(USE_UFILESYS) && defined(ESP8266)
     if (TfsLoadFile(TASM_FILE_SETTINGS_LKG, (uint8_t*)Settings, sizeof(TSettings)) && (Settings->cfg_crc32 == GetSettingsCrc32())) {
       settings_location = 1;
       AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_CONFIG "Loaded from LKG File, " D_COUNT " %lu"), Settings->save_flag);
