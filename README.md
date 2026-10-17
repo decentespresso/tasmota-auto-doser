@@ -70,7 +70,7 @@ First safe dry run:
 
 The HDS stores the selected plug by MAC address and verifies the plug MAC returned by the TCP protocol before using it. The plug MAC is visible on the Tasmota web UI status pages.
 
-Default HDS settings: `Target 15.0 g`, `Safety 2.0 g`, `Zero range -1.0 g to 1.0 g`, `Zero hold 1000 ms`.
+Check the target, safety, zero range, and zero hold values on your installed HDS before the dry test. Use the [versioned source defaults](docs/grinder-tcp.md#hds-settings) as a reference; saved settings and adaptive safety can differ.
 
 Full setup notes are in [docs/grinder-tcp.md](docs/grinder-tcp.md).
 
