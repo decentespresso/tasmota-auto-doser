@@ -86,6 +86,19 @@ Grinder builds also enforce mains-powered network behavior:
 
 An authenticated TCP client keeps the main loop awake even while `Power1` is off. Existing installations are migrated once when a persisted value differs; the main loop does not write these settings repeatedly.
 
+## Harmless-Load Commissioning
+
+Keep the grinder disconnected until these checks pass. `Power1 OFF`, `Relay.On=0`, and TCP `state=OFF` report software relay state. The firmware has no contact feedback and cannot detect welded contacts or prove that the outlet is disconnected from mains.
+
+1. Check the plug, socket, and grinder manufacturers' electrical limits, including motor starting/inrush current. A firmware-compatible GPIO template does not establish electrical suitability for a grinder.
+2. Connect a suitable mains-rated harmless indicator load, such as an enclosed lamp. Keep an independent mains disconnection within reach, such as an accessible wall switch or plug. Do not open the housing or use exposed mains probes.
+3. Observe the load after boot; it must remain off before an HDS `ON` command.
+4. Pair the HDS with the grinder disconnected. Run its dry cycle with the indicator load attached: confirm the load turns on when the scale sends `ON` and turns off at cutoff. Observe the load itself, not only the web UI or a relay click.
+5. Check connection loss during the dry cycle: the load must turn off and stay off until a new HDS `ON` command. Repeat the OFF observation after restarting the plug.
+6. If the load remains on after OFF or any check fails, disconnect mains power and stop. Resolve the fault before attaching the grinder.
+
+Disconnect mains power before replacing the harmless load with the grinder. Keep the independent mains disconnection accessible during use; a software OFF command is not electrical isolation for servicing.
+
 ## TCP Protocol
 
 Clients connect to port `31980`. Commands are ASCII lines ending in `\n` or `\r\n`.
@@ -146,7 +159,7 @@ On the HDS scale:
 8. Set `Target g`, `Safety g`, and `Zero Range`.
 9. Leave the menu with `Back`.
 10. Run a dry cycle with no grinder load.
-11. Connect the grinder only after dry tests pass.
+11. Complete [harmless-load commissioning](#harmless-load-commissioning) before connecting the grinder.
 
 The scale stores the selected plug MAC, not the IP address. mDNS, hostname, and the cached IP address are only used to find the plug again.
 
@@ -239,7 +252,7 @@ Network callbacks recover immediately after Tasmota reports usable connectivity.
 | `Net` | connectivity, IP, subnet mask, gateway, BSSID, RSSI, network generation |
 | `TCP` | listener intent, server generation, client state, HELLO state, closing state, peer address, last receive age |
 | `mDNS` | advertisement and responder state |
-| `Relay` | TCP ownership and physical relay state |
+| `Relay` | TCP ownership and software relay state |
 | `Heap` | current and minimum observed free heap |
 | `Last` | last event, network-change reason, close reason, and fail-safe OFF reason |
 | `Count` | network, listener, client, timeout, protocol, and mDNS counters |
