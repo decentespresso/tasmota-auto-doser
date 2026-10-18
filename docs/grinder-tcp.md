@@ -226,7 +226,7 @@ Multiple plugs share the service type. Their mDNS instance names are unique thro
 
 The driver treats connection state, local IPv4 address, and BSSID as one network identity. A Wi-Fi reconnect, IP change, or BSSID change increments the network generation and invalidates the active client, listener, and mDNS service. This includes a roam where the DHCP address remains unchanged.
 
-Every controlled listener restart forces `Power1 OFF`, revokes TCP ownership, closes active and pending `BUSY` clients, stops the old socket, removes the mDNS service, recreates port `31980`, restores `TCP_NODELAY`, and advertises protocol version `1` again. The `server_started` state records intent only; it does not prevent recreation after a network generation changes.
+Every controlled listener restart forces `Power1 OFF`, revokes TCP ownership, closes active and pending `BUSY` clients, stops the old socket, removes the mDNS service, recreates port `31980`, restores `TCP_NODELAY`, and advertises protocol version `1` again. The `server_started` state is local driver bookkeeping; it does not prove remote HDS reachability or prevent recreation after a network generation changes.
 
 Wi-Fi callbacks queue events for Tasmota to process on the main thread. The grinder driver observes the resulting network generation and also checks IP/BSSID identity at five-second intervals. Recovery timing includes main-loop and network-stack scheduling; callbacks do not rebuild listeners themselves.
 
@@ -249,7 +249,7 @@ The driver attempts mDNS registration when the listener starts. It retries a mis
 | `Last` | `Event`, `Age`, `Net` |
 | `Count` | `NetUp`, `NetDn`, `Link`, `WiFiDn`, `LostIP`, `GotIP`, `Restart`, `MdnsFail` |
 
-`GrinderStatus.TCP.Listen` is a listener startup flag. Value `1` records that firmware called the server startup path; it does not prove that TCP port `31980` is bound or reachable from the scale. `GrinderStatus.mDNS.Ad` records successful local service/TXT registration, not discovery from another device. Confirm remote TCP communication through an HDS `HELLO`/`PING` exchange with the expected MAC, and confirm discovery from the same local network.
+`GrinderStatus.TCP.Listen` reports the driver's local startup state. It does not prove TCP reachability from the HDS. `GrinderStatus.mDNS.Ad` records successful local service/TXT registration, not discovery from another device. Confirm remote TCP communication through an HDS `HELLO`/`PING` exchange with the expected MAC, and confirm discovery from the same local network.
 
 `GrinderStatus.Net.Up` reports a connected Wi-Fi station with IPv4. `GrinderStatus.Net.RecoveryMs` measures the captured Wi-Fi outage through the got-IP event; it is not a TCP or discovery recovery measurement. `GrinderStatus.Loop.MaxGapMs` and `GrinderStatus.mDNS.MaxMs` help identify main-loop or mDNS operation delays.
 

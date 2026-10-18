@@ -22,7 +22,10 @@ def main():
     operational = document.split("## Network Recovery\n", 1)[1].split("## HDS Troubleshooting\n", 1)[0]
     assert "removed and re-added every 60 seconds" not in operational
     assert "no periodic 60-second refresh" in operational
-    assert "listener startup flag" in operational
+    assert "`server_started` state is local driver bookkeeping" in operational
+    assert "driver's local startup state" in operational
+    assert "records intent only" not in operational
+    assert "called the server startup path" not in operational
     assert "does not prove" in operational and "TCP" in operational
     assert "while the relay is off and no HELLO-completed client is active" in operational
 
