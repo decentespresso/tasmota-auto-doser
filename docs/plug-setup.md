@@ -142,7 +142,7 @@ If you get `Unknown` instead of a `GrinderStatus` response, check that you uploa
 
 These fields report software state. The firmware has no contact feedback and cannot detect welded contacts or prove that the outlet is disconnected from mains.
 
-The listener and mDNS flags do not prove that another device can connect or discover the plug. Confirm communication during HDS pairing before the harmless-load test.
+The listener and mDNS flags do not prove that another device can connect or discover the plug. Confirm communication during HDS pairing before the empty-grinder test.
 
 With our firmware, the web **Toggle** button and the plug's physical button cannot turn the grinder outlet on. Only the grinder TCP client can do that. This is expected.
 
@@ -170,7 +170,7 @@ If you rename a plug that you have paired with an HDS scale, run **Select Plug**
 
 `_grinderplug._tcp.local` is the discovery service type that the scale searches for. It is not a browser address, and the firmware does not rename the plug to `grinderplug.local`.
 
-Setup is complete when you can open the plug on your Wi-Fi network and the checks in step 9 pass. Keep the grinder disconnected while you pair the HDS scale using the [HDS scale setup steps](../README.md#hds-scale-setup). Complete [harmless-load commissioning](grinder-tcp.md#harmless-load-commissioning), including electrical-suitability checks and an independent mains disconnection, before attaching the grinder.
+Setup is complete when you can open the plug on your Wi-Fi network and the checks in step 9 pass. Keep the grinder disconnected while you pair the HDS scale using the [HDS scale setup steps](../README.md#hds-scale-setup). Then complete [empty-grinder commissioning](grinder-tcp.md#empty-grinder-commissioning) with no beans, including electrical-suitability checks and an independent mains disconnection, before dosing coffee.
 
 ## Find the plug on your network
 
@@ -249,7 +249,7 @@ If you do not have a backup, restore the template for the **NOUS A6T only**:
 
 The template restores the pin configuration, not lost power-monitoring calibration. Restore calibration from your own backup if you need accurate power readings. Grinder dosing uses the HDS scale's weight readings rather than the plug's power measurements.
 
-Keep the grinder disconnected until the firmware checks, an HDS dry test, and [harmless-load commissioning](grinder-tcp.md#harmless-load-commissioning) pass. If reset does not produce a setup network, stop and ask for model-specific recovery help; do not open a mains-powered plug or improvise serial flashing.
+Keep the grinder disconnected until the firmware checks and HDS pairing pass. Then complete [empty-grinder commissioning](grinder-tcp.md#empty-grinder-commissioning) with no beans before dosing coffee. If reset does not produce a setup network, stop and ask for model-specific recovery help; do not open a mains-powered plug or improvise serial flashing.
 
 ## Troubleshooting
 

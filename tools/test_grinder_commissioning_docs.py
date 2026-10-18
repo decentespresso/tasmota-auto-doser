@@ -17,22 +17,29 @@ def main():
     assert "listener startup flag" in setup
     assert "do not prove that another device can connect or discover the plug" in setup
 
-    commissioning = protocol.split("## Harmless-Load Commissioning\n", 1)[1].split("\n## ", 1)[0]
+    for document in (protocol, setup, readme):
+        assert "harmless" not in document.lower()
+
+    commissioning = protocol.split("## Empty-Grinder Commissioning\n", 1)[1].split("\n## ", 1)[0]
+    assert "lamp" not in commissioning.lower()
     for requirement in (
         "motor starting/inrush current",
-        "mains-rated",
+        "no beans",
+        "empty-running and duty-cycle limits",
         "independent mains disconnection",
         "after boot",
-        "turns on",
-        "turns off at cutoff",
+        "motor starts",
+        "motor stops at cutoff",
+        "over several seconds",
+        "target - safety",
         "connection loss",
         "disconnect mains power and stop",
     ):
         assert requirement in commissioning, requirement
 
-    assert "[harmless-load commissioning](docs/grinder-tcp.md#harmless-load-commissioning)" in readme
-    assert "[harmless-load commissioning](#harmless-load-commissioning)" in protocol
-    assert "[harmless-load commissioning](grinder-tcp.md#harmless-load-commissioning)" in setup
+    assert "[empty-grinder commissioning](docs/grinder-tcp.md#empty-grinder-commissioning)" in readme
+    assert "[empty-grinder commissioning](#empty-grinder-commissioning)" in protocol
+    assert "[empty-grinder commissioning](grinder-tcp.md#empty-grinder-commissioning)" in setup
     assert "[step-by-step setup guide with screenshots](docs/plug-setup.md)" in readme
     for name in ("configuration", "firmware-upgrade", "main-menu", "wifi-parameters"):
         image = f"images/plug-setup/{name}.jpg"
