@@ -56,7 +56,9 @@ struct State {
   bool authorized_on = false;
   bool server_started = true;
   bool advertised = true;
+  bool suspended = false;
 } GrinderTcp;
+struct { uint8_t restart_flag = 0, ota_state_flag = 0; } TasmotaGlobal;
 
 struct {
   uint32_t heartbeat_timeouts = 0;
@@ -65,7 +67,7 @@ struct {
 struct { bool begun = true; } Mdns;
 bool output_on = false;
 
-void GrinderTcpRelayOff() {
+void GrinderTcpRelayOff(const char * = nullptr) {
   output_on = false;
   GrinderTcp.authorized_on = false;
 }
