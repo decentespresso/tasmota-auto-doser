@@ -637,6 +637,11 @@ void GrinderTcpStart(void) {
   }
   GrinderTcpNeutralizePowerControls();
   GrinderTcpServer.begin();
+  if (!GrinderTcpServer) {
+    GrinderTcpServer.stop();
+    AddLog(LOG_LEVEL_ERROR, PSTR("GTC: Listener start failed"));
+    return;
+  }
   GrinderTcpServer.setNoDelay(true);
   GrinderTcp.server_started = true;
   GrinderTcpDiag.server_starts++;
