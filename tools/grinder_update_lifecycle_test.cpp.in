@@ -128,6 +128,7 @@ void WebGetArg(const char *name, char *value, size_t size) {
 bool SettingsBufferAlloc(uint32_t) { return true; }
 bool SettingsConfigRestore() { return true; }
 void SettingsBufferFree() {}
+uint32_t millis() { return 0; }
 void delay(uint32_t) {}
 void OsWatchLoop() {}
 void WifiConfigCounter() {}
@@ -155,6 +156,7 @@ struct {
   void begin() {}
   void stop() {}
   void setNoDelay(bool) {}
+  explicit operator bool() const { return true; }
 } GrinderTcpServer;
 
 void GrinderTcpStart();
