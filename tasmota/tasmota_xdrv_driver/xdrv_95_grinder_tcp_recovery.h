@@ -7,7 +7,7 @@ void GrinderTcpMarkNetworkDown(const char *reason) {
     GrinderTcpDiag.network_down++;
   }
   GrinderTcpDiag.network_connected = false;
-  GrinderTcpDiag.identity_check_at = 0;
+  GrinderTcpDiag.identity_check_at = millis();
   if (GrinderTcp.server_started || GrinderTcp.client_open || GrinderTcpRelayStateOn()) {
     GrinderTcpStop(reason);
   }
@@ -107,7 +107,7 @@ void GrinderTcpAdvertise(void) {
 void GrinderTcpCheckNetwork(void) {
   const uint32_t wifi_event_generation = WifiEventGeneration();
   if (wifi_event_generation != GrinderTcpDiag.observed_wifi_event_generation) {
-    GrinderTcpDiag.identity_check_at = 0;
+    GrinderTcpDiag.identity_check_at = millis();
     GrinderTcpMarkNetworkDown("wifi_event_down");
   }
   if (!TimeReached(GrinderTcpDiag.identity_check_at)) {
@@ -167,7 +167,7 @@ void GrinderTcpCheckNetwork(void) {
 }
 
 void GrinderTcpNetworkUp(void) {
-  GrinderTcpDiag.identity_check_at = 0;
+  GrinderTcpDiag.identity_check_at = millis();
   GrinderTcpCheckNetwork();
 }
 
