@@ -226,25 +226,45 @@ Multiple plugs share the service type. Their mDNS instance names are unique thro
 
 The driver treats connection state, local IPv4 address, and BSSID as one network identity. A Wi-Fi reconnect, IP change, or BSSID change increments the network generation and invalidates the active client, listener, and mDNS service. This includes a roam where the DHCP address remains unchanged.
 
-Every controlled listener restart forces `Power1 OFF`, revokes TCP ownership, closes active and pending `BUSY` clients, stops the old socket, removes the mDNS service, recreates port `31980`, restores `TCP_NODELAY`, and advertises protocol version `1` again. The `server_started` state records intent only; it does not prevent recreation after a network generation changes.
+Every controlled listener restart forces `Power1 OFF`, revokes TCP ownership, closes active and pending `BUSY` clients, stops the old socket, removes the mDNS service, recreates port `31980`, restores `TCP_NODELAY`, and advertises protocol version `1` again. The `server_started` state is local driver bookkeeping; it does not prove remote HDS reachability or prevent recreation after a network generation changes.
 
-Network callbacks recover immediately after Tasmota reports usable connectivity. A five-second identity check catches missed roam notifications, so an IP or BSSID change is detected within five seconds. mDNS registration is attempted when the listener starts and retried every five seconds after failure. While the relay is off and no authenticated client is active, the service is removed and re-added every 60 seconds. Maintenance never interrupts an authenticated grinder connection.
+Wi-Fi callbacks queue events for Tasmota to process on the main thread. The grinder driver observes the resulting network generation and also checks IP/BSSID identity at five-second intervals. Recovery timing includes main-loop and network-stack scheduling; callbacks do not rebuild listeners themselves.
+
+The driver attempts mDNS registration when the listener starts. It retries a missing advertisement at five-second intervals while the relay is off and no HELLO-completed client is active. There is no periodic 60-second refresh. Listener restarts and responder recovery can cause a new registration attempt.
 
 `GrinderRestart` runs the same fail-safe TCP and mDNS recreation path without rebooting the plug. It is intended for field diagnosis when the Web UI works but port `31980` does not.
 
-`GrinderStatus` returns one JSON object with these groups:
+### GrinderStatus
+
+`GrinderStatus` returns one JSON object with these groups and fields:
 
 | Group | Contents |
 | --- | --- |
-| `Net` | connectivity, IP, subnet mask, gateway, BSSID, RSSI, network generation |
-| `TCP` | listener intent, server generation, client state, HELLO state, closing state, peer address, last receive age |
-| `mDNS` | advertisement and responder state |
+| `Net` | `Up`, `WL`, `IP`, `BSSID`, `RSSI`, `Gen`, `Link`, `Reason`, `RecoveryMs` |
+| `TCP` | `Listen`, `Gen`, `Client`, `Hello`, `Closing`, `PeerIP`, `PeerPort`, `RxAge` |
+| `mDNS` | `Ad`, `Up`, `MaxMs` |
 | `Relay` | TCP ownership and physical relay state |
-| `Heap` | current and minimum observed free heap |
-| `Last` | last event, network-change reason, close reason, and fail-safe OFF reason |
-| `Count` | network, listener, client, timeout, protocol, and mDNS counters |
+| `Heap` | `Free`, `Min` |
+| `Loop` | `MaxGapMs` |
+| `Last` | `Event`, `Age`, `Net` |
+| `Count` | `NetUp`, `NetDn`, `Link`, `WiFiDn`, `LostIP`, `GotIP`, `Restart`, `MdnsFail` |
 
-For a same-IP failure, compare `Net.BSSID`, `Net.Gen`, `Last.Net`, `Count.BSSID`, `Count.Restart`, and `TCP.Gen`. A changed BSSID with the same `Net.IP` should still advance both generations.
+`GrinderStatus.TCP.Listen` reports the driver's local startup state. It does not prove TCP reachability from the HDS. `GrinderStatus.mDNS.Ad` records successful local service/TXT registration, not discovery from another device. Confirm remote TCP communication through an HDS `HELLO`/`PING` exchange with the expected MAC, and confirm discovery from the same local network.
+
+`GrinderStatus.Net.Up` reports a connected Wi-Fi station with IPv4. `GrinderStatus.Net.RecoveryMs` measures the captured Wi-Fi outage through the got-IP event; it is not a TCP or discovery recovery measurement. `GrinderStatus.Loop.MaxGapMs` and `GrinderStatus.mDNS.MaxMs` help identify main-loop or mDNS operation delays.
+
+### GrinderDiag
+
+`GrinderDiag` supplies the detailed counters and close/OFF reasons:
+
+| Group | Contents |
+| --- | --- |
+| `Change` | `IP`, `BSSID` |
+| `TCP` | `Start`, `Stop`, `Accept`, `Busy`, `Close`, `HelloTO`, `HeartbeatTO`, `Protocol` |
+| `mDNS` | `Try`, `Ok`, `Fail`, `Down`, `SvcFail`, `TxtFail` |
+| `Last` | `Close`, `Off` |
+
+For a same-IP failure, compare `GrinderStatus.Net.BSSID`, `GrinderStatus.Net.Gen`, `GrinderStatus.Last.Net`, `GrinderStatus.Count.Restart`, `GrinderStatus.TCP.Gen`, and `GrinderDiag.Change.BSSID`. A detected BSSID change with the same IP should still advance the network and server generations. Use `GrinderDiag.Last.Close` and `GrinderDiag.Last.Off` for shutdown reasons, and `GrinderDiag.TCP.HelloTO`, `GrinderDiag.TCP.HeartbeatTO`, and `GrinderDiag.TCP.Protocol` for timeout/protocol counts.
 
 ## HDS Troubleshooting
 
@@ -255,16 +275,18 @@ dns-sd -B _grinderplug._tcp local
 dns-sd -L "INSTANCE NAME HERE" _grinderplug._tcp local
 ```
 
+Resolve the service's SRV record for the hostname and port. Its SRV port is `31980`; the port is not a TXT key.
+
 Expected TXT data:
 
 ```text
-port=31980
 mac=<plug_mac>
+name=<hostname>
 model=<build_model>
 proto=1
 ```
 
-If `_http._tcp` appears but `_grinderplug._tcp` does not, the plug service advertisement is wrong.
+If `_http._tcp` appears but `_grinderplug._tcp` does not, check the grinder advertisement flags and counters above, then check multicast delivery from that client. The HTTP advertisement alone does not establish that grinder discovery works.
 
 If the scale shows `plug wait`, the selected plug cannot be reached. Check that the plug is powered, on the same WLAN, listening on port `31980`, and still using the saved hostname or cached IP. If the IP changed and hostname lookup does not recover it, run `Select Plug` again.
 
@@ -350,4 +372,4 @@ Run the logger for 8 to 12 hours with the grinder disconnected or a harmless loa
 powershell -ExecutionPolicy Bypass -File tools/grinder_soak_test.ps1 -Ip 192.168.178.30 -ExpectedMac 1C:69:20:0B:54:20 -DurationHours 12 -Output grinder-soak.csv
 ```
 
-The logger performs repeated TCP sessions, runs periodic mDNS discovery, and records IP, BSSID, RSSI, network and server generations, restart and refresh counters, relay state, free heap, and minimum free heap. During the run, perform at least one controlled AP disconnect, reboot, or roam. Acceptance requires continuous `Power1 OFF` outside authenticated `ON`, TCP recovery within five seconds after usable Wi-Fi returns, mDNS recovery within the five-second retry window, no permanent `BUSY`, and no declining free-heap trend.
+The logger performs repeated TCP sessions, runs periodic mDNS discovery, and records IP, BSSID, RSSI, network and server generations, restart and mDNS failure counters, TCP/HTTP/discovery probe latency, maximum loop/mDNS operation delays, relay state, free heap, and minimum free heap. During the run, perform at least one controlled AP disconnect, reboot, or roam. Acceptance requires continuous `Power1 OFF` outside authenticated `ON`, TCP recovery within five seconds after usable Wi-Fi returns, mDNS recovery within the five-second retry window, no permanent `BUSY`, and no declining free-heap trend.
