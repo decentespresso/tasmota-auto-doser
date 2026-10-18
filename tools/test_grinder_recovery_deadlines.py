@@ -49,7 +49,9 @@ struct State {
   bool server_started = false;
   bool client_open = false;
   bool advertised = false;
+  bool suspended = false;
 } GrinderTcp;
+struct { uint8_t restart_flag = 0, ota_state_flag = 0; } TasmotaGlobal;
 __DIAGNOSTICS__
 struct { bool begun = true; } Mdns;
 struct {
@@ -87,7 +89,7 @@ void GrinderTcpFormatBssid(char *dest, size_t size) { strlcpy(dest, "AA:BB:CC:DD
 bool GrinderTcpCacheIdentity() { return true; }
 bool GrinderTcpRelayHardwareSupported() { return true; }
 bool GrinderTcpRelayStateOn() { return output_on; }
-void GrinderTcpRelayOff() { output_on = false; }
+void GrinderTcpRelayOff(const char * = nullptr) { output_on = false; }
 void GrinderTcpNeutralizePowerControls() {}
 void GrinderTcpRecordEvent(const char *) {}
 void GrinderTcpEnsureMdns() { Mdns.begun = true; }
