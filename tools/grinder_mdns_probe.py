@@ -256,6 +256,49 @@ def format_value(value):
     return str(value)
 
 
+def qualification_checks(records, service, expected_mac, expected_model, expected_proto, target_ip):
+    ptr_targets = {
+        normalize_name(record["value"]) for record in records
+        if record["type"] == TYPE_PTR and normalize_name(record["name"]) == normalize_name(service)
+    }
+    txt_records = tuple(
+        record for record in records
+        if record["type"] == TYPE_TXT and normalize_name(record["name"]) in ptr_targets
+    )
+    target_hostnames = {
+        normalize_name(record["name"]) for record in records
+        if record["type"] in (TYPE_A, TYPE_AAAA) and record["value"] == target_ip
+    }
+    checks = {
+        "service": bool(ptr_targets), "srv": False, "txt": bool(txt_records),
+        "mac": False, "model": not expected_model, "proto": False,
+        "port": False, "address": False,
+    }
+    for txt_record in txt_records:
+        txt = txt_record["value"]
+        if not isinstance(txt, dict) or txt.get("mac") != expected_mac:
+            continue
+        instance = normalize_name(txt_record["name"])
+        srv_records = tuple(
+            record for record in records
+            if record["type"] == TYPE_SRV and normalize_name(record["name"]) == instance
+        )
+        port_records = tuple(record for record in srv_records if record["value"]["port"] == 31980)
+        checks = {
+            "service": True,
+            "srv": bool(srv_records),
+            "txt": True,
+            "mac": True,
+            "model": not expected_model or txt.get("model") == expected_model,
+            "proto": txt.get("proto") == expected_proto,
+            "port": bool(port_records),
+            "address": any(normalize_name(record["value"]["target"]) in target_hostnames for record in port_records),
+        }
+        if all(checks.values()):
+            return checks
+    return checks
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--service", default="_grinderplug._tcp.local")
@@ -272,23 +315,9 @@ def main():
 
     records, errors = collect_records(args.service, args.timeout, interface_ip)
     records = unique_records(records)
-    service = normalize_name(args.service)
-    ptr_targets = [record["value"] for record in records if record["type"] == TYPE_PTR and normalize_name(record["name"]) == service]
-    txt_records = [record for record in records if record["type"] == TYPE_TXT and any(normalize_name(record["name"]) == normalize_name(target) for target in ptr_targets)]
-    srv_records = [record for record in records if record["type"] == TYPE_SRV and any(normalize_name(record["name"]) == normalize_name(target) for target in ptr_targets)]
-    txt_values = {}
-    for record in txt_records:
-        if isinstance(record["value"], dict):
-            txt_values.update(record["value"])
-
-    checks = {
-        "service": bool(ptr_targets),
-        "srv": bool(srv_records),
-        "txt": bool(txt_records),
-        "mac": txt_values.get("mac") == args.expected_mac,
-        "model": not args.expected_model or txt_values.get("model") == args.expected_model,
-        "proto": txt_values.get("proto") == args.expected_proto,
-    }
+    checks = qualification_checks(
+        records, args.service, args.expected_mac, args.expected_model, args.expected_proto, args.target_ip,
+    )
 
     for record in records:
         print(f"{type_name(record['type'])}\t{record['name']}\t{format_value(record['value'])}\tfrom={record['remote']}")
