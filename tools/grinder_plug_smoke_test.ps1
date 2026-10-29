@@ -342,12 +342,21 @@ function Test-ReconnectAfterHeartbeat() {
 
 function Test-ControlledRestart() {
   Set-RelayOff
-  $response = Invoke-TasmotaCommand 'GrinderRestart'
-  Start-Sleep -Milliseconds 250
-  $status = $response.GrinderStatus
-  $power = Get-PowerState
-  $pass = ($null -ne $status) -and ([bool]$status.TCP.Listen) -and ($power -eq 'OFF')
-  Add-Result 'Controlled service restart stays OFF' $pass "serverGeneration=$($status.TCP.Gen) Power1=$power"
+  $before = (Invoke-TasmotaCommand 'GrinderStatus').GrinderStatus
+  $conn = $null
+  try {
+    $response = Invoke-TasmotaCommand 'GrinderRestart'
+    Start-Sleep -Milliseconds 250
+    $status = $response.GrinderStatus
+    $conn = New-GrinderClient
+    $hello = Send-GrinderCommand $conn "HELLO $ScaleMac"
+    $bye = Send-GrinderCommand $conn 'BYE'
+    $power = Get-PowerState
+    $pass = ($null -ne $before.TCP.Gen) -and ($null -ne $status) -and ([bool]$status.TCP.Listen) -and ($status.TCP.Gen -gt $before.TCP.Gen) -and (Is-OkState $hello 'OFF') -and (Is-OkState $bye 'OFF') -and ($power -eq 'OFF')
+    Add-Result 'Controlled service restart stays OFF' $pass "serverGeneration=$($before.TCP.Gen)->$($status.TCP.Gen) hello=$hello bye=$bye Power1=$power"
+  } finally {
+    Close-GrinderClient $conn
+  }
 }
 
 function Test-Diagnostics() {
