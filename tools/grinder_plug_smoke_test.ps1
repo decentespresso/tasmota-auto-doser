@@ -281,6 +281,10 @@ function Test-RepeatedBusy() {
     $active = New-GrinderClient
     $hello = Send-GrinderCommand $active "HELLO $ScaleMac"
     for ($i = 0; $i -lt 20; $i++) {
+      $ping = Send-GrinderCommand $active 'PING'
+      if (-not (Is-OkState $ping 'OFF')) {
+        throw "Owner heartbeat failed during BUSY test: $ping"
+      }
       $busy = $null
       try {
         $busy = New-GrinderClient
