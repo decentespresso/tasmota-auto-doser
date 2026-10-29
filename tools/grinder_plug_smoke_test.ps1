@@ -281,6 +281,10 @@ function Test-RepeatedBusy() {
     $active = New-GrinderClient
     $hello = Send-GrinderCommand $active "HELLO $ScaleMac"
     for ($i = 0; $i -lt 20; $i++) {
+      $ping = Send-GrinderCommand $active 'PING'
+      if (-not (Is-OkState $ping 'OFF')) {
+        throw "Owner heartbeat failed during BUSY test: $ping"
+      }
       $busy = $null
       try {
         $busy = New-GrinderClient
@@ -306,8 +310,6 @@ function Test-NoHelloTimeout() {
   try {
     $silent = New-GrinderClient
     Start-Sleep -Milliseconds 1250
-    Close-GrinderClient $silent
-    $silent = $null
     $reconnect = New-GrinderClient
     $hello = Send-GrinderCommand $reconnect "HELLO $ScaleMac"
     $bye = Send-GrinderCommand $reconnect 'BYE'
@@ -327,8 +329,6 @@ function Test-ReconnectAfterHeartbeat() {
     $stale = New-GrinderClient
     $hello = Send-GrinderCommand $stale "HELLO $ScaleMac"
     Start-Sleep -Milliseconds 2200
-    Close-GrinderClient $stale
-    $stale = $null
     $reconnect = New-GrinderClient
     $nextHello = Send-GrinderCommand $reconnect "HELLO $ScaleMac"
     $bye = Send-GrinderCommand $reconnect 'BYE'

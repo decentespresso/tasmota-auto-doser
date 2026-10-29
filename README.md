@@ -8,6 +8,8 @@ Latest firmware: [GitHub Releases](https://github.com/decentespresso/tasmota-aut
 
 ## Quick Install
 
+For a new NOUS A6T, follow the [step-by-step setup guide with screenshots](docs/plug-setup.md), from its first Wi-Fi connection through installing and checking our firmware.
+
 Download firmware from the [latest GitHub Release](https://github.com/decentespresso/tasmota-auto-doser/releases/latest).
 
 Use:
@@ -16,7 +18,7 @@ Use:
 - `tasmota32-grinder.bin` for validated classic ESP32 plugs with exactly one normal `Relay1`.
 - `tasmota32c3-athom-eu-v3-grinder.bin` for the Athom Tasmota ESP32-C3 EU Plug V3 (PG01V3), pending hardware validation.
 
-Before flashing, disconnect the grinder or use a harmless load. Back up the current Tasmota configuration, then upload the `.bin` file through the Tasmota web UI firmware upgrade page.
+Before flashing, disconnect the grinder. Back up the current Tasmota configuration, then upload the `.bin` file through the Tasmota web UI firmware upgrade page.
 
 Do not use official Tasmota OTA binaries for grinder control. They do not contain this TCP driver.
 
@@ -65,8 +67,7 @@ First safe dry run:
 5. Enable grinder mode.
 6. Use `Select Plug` and choose the plug MAC shown by discovery.
 7. Set `Target g` , `Safety g`, and `Zero Range`.
-8. Dry-test with no grinder load (Target - Safety g is the stop point of the plug).
-9. Connect the grinder only after the dry test passes.
+8. Complete [empty-grinder commissioning](docs/grinder-tcp.md#empty-grinder-commissioning) with no beans before dosing coffee (`Target g - Safety g` is the cutoff).
 
 The HDS stores the selected plug by MAC address and verifies the plug MAC returned by the TCP protocol before using it. The plug MAC is visible on the Tasmota web UI status pages.
 

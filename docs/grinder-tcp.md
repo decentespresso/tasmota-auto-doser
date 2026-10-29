@@ -86,6 +86,19 @@ Grinder builds also enforce mains-powered network behavior:
 
 An authenticated TCP client keeps the main loop awake even while `Power1` is off. Existing installations are migrated once when a persisted value differs; the main loop does not write these settings repeatedly.
 
+## Empty-Grinder Commissioning
+
+Test with the grinder and no beans. `Power1 OFF`, `Relay.On=0`, and TCP `state=OFF` report software relay state. The firmware has no contact feedback and cannot detect welded contacts or prove that the outlet is disconnected from mains.
+
+1. Check the plug, socket, and grinder manufacturers' electrical limits, including motor starting/inrush current. A firmware-compatible GPIO template does not establish electrical suitability for a grinder.
+2. Empty the grinder and check that its manufacturer permits running it without beans. Keep each test brief and within its empty-running and duty-cycle limits. Keep an independent mains disconnection within reach, such as an accessible wall switch or plug. Do not open the housing or use exposed mains probes.
+3. Pair the HDS with the grinder disconnected. Disconnect mains power before connecting the empty grinder, prepare its own switch for operation according to its instructions, then restore power. Observe the motor after boot; it must stay stopped before an HDS `ON` command.
+4. Run an HDS dry cycle: confirm the motor starts when the scale sends `ON`, operating the grinder's own switch if needed. Gradually add test material to the dosing cup over several seconds to simulate grounds until the scale reaches `target - safety`. Keep that material out of the grinder. Confirm the motor stops at cutoff; an empty grinder alone adds no weight and will not trigger cutoff. Observe the motor itself, not only the web UI or a relay click.
+5. Check connection loss during a brief dry cycle: the motor must stop and stay stopped until a new HDS `ON` command. Repeat the stopped-motor observation after restarting the plug.
+6. If the motor keeps running after OFF or any check fails, disconnect mains power and stop. Resolve the fault before adding beans or using the grinder.
+
+Keep the independent mains disconnection accessible during use. Disconnect mains power before cleaning or servicing; a software OFF command is not electrical isolation.
+
 ## TCP Protocol
 
 Clients connect to port `31980`. Commands are ASCII lines ending in `\n` or `\r\n`.
@@ -145,8 +158,7 @@ On the HDS scale:
 7. Choose the plug by MAC address, for example `1C:69:20:0B:54:20`.
 8. Set `Target g`, `Safety g`, and `Zero Range`.
 9. Leave the menu with `Back`.
-10. Run a dry cycle with no grinder load.
-11. Connect the grinder only after dry tests pass.
+10. Complete [empty-grinder commissioning](#empty-grinder-commissioning) with no beans before dosing coffee.
 
 The scale stores the selected plug MAC, not the IP address. mDNS, hostname, and the cached IP address are only used to find the plug again.
 
@@ -239,7 +251,7 @@ Network callbacks recover immediately after Tasmota reports usable connectivity.
 | `Net` | connectivity, IP, subnet mask, gateway, BSSID, RSSI, network generation |
 | `TCP` | listener intent, server generation, client state, HELLO state, closing state, peer address, last receive age |
 | `mDNS` | advertisement and responder state |
-| `Relay` | TCP ownership and physical relay state |
+| `Relay` | TCP ownership and software relay state |
 | `Heap` | current and minimum observed free heap |
 | `Last` | last event, network-change reason, close reason, and fail-safe OFF reason |
 | `Count` | network, listener, client, timeout, protocol, and mDNS counters |
@@ -330,21 +342,21 @@ Expected coverage:
 - `GrinderRestart` recreates the service while keeping the relay off
 - `GrinderStatus` exposes the required schema and counters
 
-The smoke test must run first with the grinder disconnected or with a harmless load. The mDNS probe should be repeated after `GrinderRestart` and after each controlled Wi-Fi or AP transition.
+Run the automated smoke test with the grinder disconnected. Use [empty-grinder commissioning](#empty-grinder-commissioning) for the brief motor checks. Repeat the mDNS probe after `GrinderRestart` and after each controlled Wi-Fi or AP transition.
 
 ### Athom EU V3 Hardware Validation
 
-Keep the grinder disconnected throughout these checks. Build availability does not establish hardware-tested status.
+Keep the grinder disconnected for steps 1 to 4. Use the empty grinder for the brief motor checks in step 5. Build availability does not establish hardware-tested status.
 
 1. Before upgrading, back up the Tasmota configuration and record the Wi-Fi settings, active template, and energy calibration. Confirm one normal `Relay 1` on GPIO5, the button on GPIO3, inverted link LED on GPIO6, and `CSE7766 Rx` for the HLW8032 meter on GPIO20 against Athom's published template.
 2. Upload the dedicated Athom OTA `.bin` through the Tasmota Web UI without resetting settings. Confirm the image label `athom-eu-v3-grinder`, retained Wi-Fi/template/calibration, and `Power1 OFF` after boot and a power cycle.
-3. Check the button and link LED; button or Web/HTTP `Power1 ON` attempts must not energize the relay. Confirm voltage, current, power, and energy readings remain available; use a harmless load for measurement checks.
+3. Check the button and link LED; button or Web/HTTP `Power1 ON` attempts must not energize the relay. Confirm voltage, current, power, and energy readings remain available.
 4. Run the mDNS probe with `--expected-model ATHOM_EU_V3`, the Athom plug's MAC, and its IP address. Run the existing smoke test against that IP and MAC to exercise TCP commands, second-client `BUSY`, disconnect, heartbeat timeout, and service recovery.
-5. Interrupt Wi-Fi during an authenticated TCP `ON` with a harmless load. Verify the relay turns off, stays off after reconnection, and discovery and TCP recover. Record the hardware and firmware versions and results before marking this target hardware-tested.
+5. Complete [empty-grinder commissioning](#empty-grinder-commissioning), including the connection-loss and restart checks. Confirm current, power, and energy readings respond during the brief motor run, and discovery and TCP recover after reconnection. Record the hardware and firmware versions and results before marking this target hardware-tested.
 
 ## Soak Test
 
-Run the logger for 8 to 12 hours with the grinder disconnected or a harmless load:
+Run the logger for 8 to 12 hours with the grinder disconnected:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/grinder_soak_test.ps1 -Ip 192.168.178.30 -ExpectedMac 1C:69:20:0B:54:20 -DurationHours 12 -Output grinder-soak.csv

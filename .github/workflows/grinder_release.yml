@@ -32,6 +32,7 @@ jobs:
           g++ -std=c++17 tools/grinder_tcp_driver_sim_test.cpp -o build/host-tests/grinder_tcp_driver_sim_test
           ./build/host-tests/grinder_tcp_protocol_test
           ./build/host-tests/grinder_tcp_driver_sim_test
+          python3 -B tools/test_grinder_mdns_probe.py -v
       - name: Test release publication offline
         run: python3 -B tools/grinder_release_publish_test.py
 
