@@ -3436,7 +3436,6 @@ void HandleUpgradeFirmwareStart(void) {
 
   char command[TOPSZ + 10];  // OtaUrl
 
-  AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_HTTP D_UPGRADE_STARTED));
   WifiConfigCounter();
 
   char otaurl[TOPSZ];
@@ -3446,6 +3445,14 @@ void HandleUpgradeFirmwareStart(void) {
     ExecuteWebCommand(command);
   }
 
+#ifdef USE_GRINDER_TCP
+  if (!strlen(SettingsText(SET_OTAURL))) {
+    HandleUpgradeFirmware();
+    return;
+  }
+#endif
+
+  AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_HTTP D_UPGRADE_STARTED));
   WSContentStart_P(PSTR(D_INFORMATION));
   WSContentSend_P(HTTP_SCRIPT_RELOAD_TIME, HTTP_OTA_RESTART_RECONNECT_TIME);
   WSContentSendStyle();
