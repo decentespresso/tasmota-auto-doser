@@ -223,6 +223,7 @@ const uint8_t CFG_ROTATES = 7;      // Number of flash sectors used (handles upl
 
 uint32_t settings_location = EEPROM_LOCATION;
 uint32_t settings_crc32 = 0;
+uint32_t settings_save_retry = 0;
 uint32_t settings_size = 0;
 uint8_t *settings_buffer = nullptr;
 uint8_t config_xor_on_set = CONFIG_FILE_XOR;
@@ -781,11 +782,18 @@ void SettingsSave(uint8_t rotate) {
     AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_CONFIG D_SAVED_TO_FLASH_AT " %X, " D_COUNT " %d, " D_BYTES " %d"), settings_location, Settings->save_flag, sizeof(TSettings));
 #endif  // ESP8266
 #ifdef ESP32
-    SettingsWrite(Settings, sizeof(TSettings));
-    AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_CONFIG "Saved, " D_COUNT " %d, " D_BYTES " %d"), Settings->save_flag, sizeof(TSettings));
+    const bool saved = SettingsWrite(Settings, sizeof(TSettings));
+    settings_save_retry = saved ? 0 : millis() + 60000;
+    if (saved) {
+      AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_CONFIG "Saved, " D_COUNT " %d, " D_BYTES " %d"), Settings->save_flag, sizeof(TSettings));
+    } else {
+      AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_CONFIG "Save failed; retry in 60 seconds"));
+    }
+#else
+    const bool saved = true;
 #endif  // ESP32
 
-    settings_crc32 = Settings->cfg_crc32;
+    if (saved) { settings_crc32 = Settings->cfg_crc32; }
   }
 #endif  // FIRMWARE_MINIMAL
   RtcSettingsSave();
@@ -841,10 +849,10 @@ void SettingsLoad(void) {
 
 #ifdef ESP32
   uint32_t source = SettingsRead(Settings, sizeof(TSettings));
+  settings_location = source ? 1 : 0;
   if (source) {
-    settings_location = 1;
     if (Settings->cfg_holder == (uint16_t)CFG_HOLDER) {
-      AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_CONFIG "Loaded from %s, " D_COUNT " %lu"), (2 == source)?"File":"NVS", Settings->save_flag);
+      AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_CONFIG "Loaded from %s, " D_COUNT " %lu"), (2 == source)?"File":(3 == source)?"LKG File":"NVS", Settings->save_flag);
     }
   }
 #endif  // ESP32
@@ -852,7 +860,7 @@ void SettingsLoad(void) {
 #ifndef FIRMWARE_MINIMAL
   if ((0 == settings_location) || (Settings->cfg_holder != (uint16_t)CFG_HOLDER)) {  // Init defaults if cfg_holder differs from user settings in my_user_config.h
 //  if ((0 == settings_location) || (Settings->cfg_size != sizeof(TSettings)) || (Settings->cfg_holder != (uint16_t)CFG_HOLDER)) {  // Init defaults if cfg_holder differs from user settings in my_user_config.h
-#ifdef USE_UFILESYS
+#if defined(USE_UFILESYS) && defined(ESP8266)
     if (TfsLoadFile(TASM_FILE_SETTINGS_LKG, (uint8_t*)Settings, sizeof(TSettings)) && (Settings->cfg_crc32 == GetSettingsCrc32())) {
       settings_location = 1;
       AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_CONFIG "Loaded from LKG File, " D_COUNT " %lu"), Settings->save_flag);

@@ -438,7 +438,7 @@ bool TfsSaveFile(const char *fname, const uint8_t *buf, uint32_t len) {
   } else {
     // This will timeout on ESP32-webcam
     // But now solved with WcInterrupt(0) in support_esp.ino
-    file.write(buf, len);
+    result = file.write(buf, len) == len;
   /*
     // This will still timeout on ESP32-webcam when wcresolution 10
     uint32_t count = len / 512;
@@ -456,7 +456,7 @@ bool TfsSaveFile(const char *fname, const uint8_t *buf, uint32_t len) {
     }
   */
     file.close();
-    result = true;
+    if (!result) { AddLog(LOG_LEVEL_INFO, PSTR("TFS: Save failed")); }
   }
 #ifdef USE_WEBCAM
   WcInterrupt(1);
@@ -491,9 +491,9 @@ bool TfsLoadFile(const char *fname, uint8_t *buf, uint32_t len) {
 
   size_t flen = file.size();
   if (len > flen) { len = flen; }           // Adjust requested length to smaller file length
-  file.read(buf, len);
+  const size_t read = file.read(buf, len);
   file.close();
-  return true;
+  return read == len;
 }
 
 String TfsLoadString(const char *fname) {

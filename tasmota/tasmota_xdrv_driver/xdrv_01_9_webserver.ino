@@ -27,6 +27,10 @@
 
 #define XDRV_01                                   1
 
+#ifdef USE_GRINDER_TCP
+void GrinderTcpStop(const char *reason);
+#endif
+
 // Enable below demo feature only if defines USE_UNISHOX_COMPRESSION and USE_SCRIPT_WEB_DISPLAY are disabled
 //#define USE_WEB_SSE
 
@@ -2561,13 +2565,21 @@ void HandleWifiConfiguration(void) {
       if (Webserver->hasArg(F("scan"))) { limitScannedNetworks = false; }
 
       AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_WIFI "Scanning..."));
+#ifdef USE_GRINDER_TCP
+      GrinderTcpStop("wifi_scan");
+#endif
 #ifdef USE_EMULATION
       UdpDisconnect();
 #endif  // USE_EMULATION
+      const uint32_t scan_started = millis();
       int n = WiFi.scanNetworks(true);
-      while(n<0){
-        delay(50); // some magic number - maybe non optimal
+      while ((WIFI_SCAN_RUNNING == n) && (millis() - scan_started < 10000)) {
+        delay(50);
         n = WiFi.scanComplete();
+      }
+      if (n < 0) {
+        WiFi.scanDelete();
+        n = 0;
       }
       AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_WIFI D_SCAN_DONE));
 
@@ -3424,7 +3436,6 @@ void HandleUpgradeFirmwareStart(void) {
 
   char command[TOPSZ + 10];  // OtaUrl
 
-  AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_HTTP D_UPGRADE_STARTED));
   WifiConfigCounter();
 
   char otaurl[TOPSZ];
@@ -3434,6 +3445,14 @@ void HandleUpgradeFirmwareStart(void) {
     ExecuteWebCommand(command);
   }
 
+#ifdef USE_GRINDER_TCP
+  if (!strlen(SettingsText(SET_OTAURL))) {
+    HandleUpgradeFirmware();
+    return;
+  }
+#endif
+
+  AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_HTTP D_UPGRADE_STARTED));
   WSContentStart_P(PSTR(D_INFORMATION));
   WSContentSend_P(HTTP_SCRIPT_RELOAD_TIME, HTTP_OTA_RESTART_RECONNECT_TIME);
   WSContentSendStyle();

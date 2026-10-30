@@ -1572,7 +1572,7 @@ void Every250mSeconds(void)
         } else {
           Settings->power = 0;
         }
-        if (!TasmotaGlobal.restart_flag) { SettingsSave(0); }
+        if (!TasmotaGlobal.restart_flag && (!settings_save_retry || TimeReached(settings_save_retry))) { SettingsSave(0); }
         TasmotaGlobal.save_data_counter = Settings->save_data;
       }
     }

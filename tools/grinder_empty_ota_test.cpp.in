@@ -1,0 +1,188 @@
+#include <cassert>
+#include <cstdarg>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <initializer_list>
+#include <string>
+
+#define ESP32
+#define USE_WEBCLIENT_HTTPS
+#define TOPSZ 151
+#define PSTR(text) text
+#define snprintf_P snprintf
+#define OTA_URL ""
+#define D_JSON_VERSION "Version"
+#define D_JSON_FROM "from"
+#define D_JSON_ONE_OR_GT "1 or greater"
+#define D_JSON_FAILED "Failed"
+#define D_JSON_EMPTY "Empty"
+#define D_CMND_OTAURL "OtaUrl"
+#define D_CMND_UPGRADE "Upgrade"
+#define D_LOG_HTTP ""
+#define D_UPGRADE_STARTED "Upgrade started"
+#define D_INFORMATION "Information"
+#define HTTP_SCRIPT_RELOAD_TIME ""
+#define HTTP_OTA_RESTART_RECONNECT_TIME 0
+#define HTTP_MSG_RSTRT ""
+#define LOG_LEVEL_DEBUG 0
+#define BUTTON_MAIN 0
+#define SET_OTAURL 0
+#define SC_DEFAULT 1
+
+struct {
+  uint32_t data_len = 1;
+  int32_t payload = 1;
+  const char *data = "1", *command = "Upgrade";
+} XdrvMailbox;
+struct {
+  bool ota_factory = true;
+  uint8_t ota_state_flag = 0, restart_flag = 0;
+  const char *version = "15.5.0.1";
+} TasmotaGlobal;
+
+std::string stored_url, submitted_url, response, payload;
+uint32_t url_writes = 0, upgrade_commands = 0, upgrade_forms = 0, started_pages = 0;
+
+uint32_t ESP_getChipId() { return 1234; }
+const char *SettingsText(uint32_t) { return stored_url.c_str(); }
+void SettingsUpdateText(uint32_t, const char *value) { stored_url = value; ++url_writes; }
+void strlcpy(char *output, const char *input, size_t size) { std::snprintf(output, size, "%s", input); }
+bool NewerVersion(const char *value) { return std::strcmp(value, "99.0.0") == 0; }
+bool EspSingleOtaPartition() { return true; }
+bool EspRunningFactoryPartition() { return false; }
+uint32_t Shortcut() { return payload == "1" ? SC_DEFAULT : 0; }
+void ResponseCmndChar(const char *value) { response = value; }
+void ResponseCmndChar_P(const char *value) { response = value; }
+void Response_P(const char *format, ...) {
+  char buffer[512];
+  va_list arguments;
+  va_start(arguments, format);
+  std::vsnprintf(buffer, sizeof(buffer), format, arguments);
+  va_end(arguments);
+  response = buffer;
+}
+bool HttpCheckPriviledgedAccess() { return true; }
+void WifiConfigCounter() {}
+void WebGetArg(const char *, char *value, size_t size) { strlcpy(value, submitted_url.c_str(), size); }
+template <typename... Args> void AddLog(Args...) {}
+void WSContentStart_P(const char *) { ++started_pages; }
+template <typename... Args> void WSContentSend_P(Args...) {}
+void WSContentSendStyle() {}
+void WSContentSpaceButton(uint32_t) {}
+void WSContentStop() {}
+void HandleUpgradeFirmware() { ++upgrade_forms; }
+void ExecuteWebCommand(char *command);
+
+__PRODUCTION_FUNCTIONS__
+
+void SetCommand(const char *command, const char *value) {
+  payload = value;
+  XdrvMailbox.command = command;
+  XdrvMailbox.data = payload.c_str();
+  XdrvMailbox.data_len = payload.size();
+  XdrvMailbox.payload = std::atoi(payload.c_str());
+}
+
+void ExecuteWebCommand(char *command) {
+  const std::string text = command;
+  const auto space = text.find(' ');
+  const auto name = text.substr(0, space);
+  const auto value = text.substr(space + 1);
+  if (name == "OtaUrl") {
+    SetCommand("OtaUrl", value.c_str());
+    CmndOtaUrl();
+  } else {
+    assert(name == "Upgrade");
+    ++upgrade_commands;
+    SetCommand("Upgrade", value.c_str());
+    CmndUpgrade();
+  }
+}
+
+void Reset(const char *url = "") {
+  stored_url = url;
+  submitted_url.clear();
+  response.clear();
+  TasmotaGlobal = {};
+  TasmotaGlobal.ota_factory = true;
+  url_writes = upgrade_commands = upgrade_forms = started_pages = 0;
+  SetCommand("Upgrade", "1");
+}
+
+void TestEmptyCommand() {
+  for (const char *value : {"1", "99.0.0"}) {
+    Reset();
+    SetCommand("Upgrade", value);
+    CmndUpgrade();
+#ifdef USE_GRINDER_TCP
+    assert(TasmotaGlobal.ota_state_flag == 0);
+    assert(TasmotaGlobal.ota_factory);
+    assert(response.find("Empty") != std::string::npos);
+#else
+    assert(TasmotaGlobal.ota_state_flag == 3);
+#endif
+    assert(TasmotaGlobal.restart_flag == 0);
+    assert(url_writes == 0);
+  }
+}
+
+void TestEmptyUpgradeButton() {
+  Reset();
+  HandleUpgradeFirmwareStart();
+#ifdef USE_GRINDER_TCP
+  assert(TasmotaGlobal.ota_state_flag == 0);
+  assert(TasmotaGlobal.ota_factory);
+  assert(upgrade_commands == 0);
+  assert(upgrade_forms == 1);
+  assert(started_pages == 0);
+#else
+  assert(TasmotaGlobal.ota_state_flag == 3);
+#endif
+  assert(TasmotaGlobal.restart_flag == 0);
+  assert(url_writes == 0);
+}
+
+void TestValidUrlsRemainSupported() {
+  for (const char *url : {"http://updates.invalid/grinder.bin", "https://updates.invalid/grinder.bin",
+                          "https://updates.invalid/grinder-%04d.bin", "http://updates.invalid/grinder-%d.bin"}) {
+    Reset(url);
+    CmndUpgrade();
+    assert(TasmotaGlobal.ota_state_flag == 3);
+    assert(!TasmotaGlobal.ota_factory);
+    assert(response.find("updates.invalid/grinder-") == std::string::npos ||
+           response.find("grinder-1234.bin") != std::string::npos);
+    assert(stored_url == url);
+    Reset(url);
+    HandleUpgradeFirmwareStart();
+    assert(TasmotaGlobal.ota_state_flag == 3);
+    assert(upgrade_commands == 1 && started_pages == 1);
+    assert(stored_url == url && url_writes == 0);
+    Reset();
+    submitted_url = url;
+    HandleUpgradeFirmwareStart();
+    assert(TasmotaGlobal.ota_state_flag == 3);
+    assert(stored_url == url && url_writes == 1);
+  }
+}
+
+void TestDefaultShortcutBecomesEmpty() {
+  Reset("https://updates.invalid/grinder.bin");
+  SetCommand("OtaUrl", "1");
+  CmndOtaUrl();
+  assert(stored_url.empty());
+  SetCommand("Upgrade", "1");
+  CmndUpgrade();
+#ifdef USE_GRINDER_TCP
+  assert(TasmotaGlobal.ota_state_flag == 0);
+#endif
+}
+
+int main() {
+  TestEmptyCommand();
+  TestEmptyUpgradeButton();
+  TestValidUrlsRemainSupported();
+  TestDefaultShortcutBecomesEmpty();
+  puts("grinder_empty_ota_test passed");
+}

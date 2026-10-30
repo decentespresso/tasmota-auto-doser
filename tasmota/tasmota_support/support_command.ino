@@ -1330,12 +1330,19 @@ void CmndUpgrade(void) {
   // Upload 1 - OTA upload binary
   // Upload 2 - (ESP32 only) OTA upload safeboot binary if partition is present
   if (((1 == XdrvMailbox.data_len) && (1 == XdrvMailbox.payload)) || ((XdrvMailbox.data_len >= 3) && NewerVersion(XdrvMailbox.data))) {
+    char stemp1[TOPSZ];
+    GetOtaUrl(stemp1, sizeof(stemp1));
+#ifdef USE_GRINDER_TCP
+    if (!stemp1[0]) {
+      ResponseCmndChar_P(PSTR(D_JSON_FAILED " (" D_CMND_OTAURL " " D_JSON_EMPTY ")"));
+      return;
+    }
+#endif
 #ifdef ESP32
     TasmotaGlobal.ota_factory = false;  // Reset in case of failed safeboot upgrade
 #endif  // ESP32 and WEBCLIENT_HTTPS
     TasmotaGlobal.ota_state_flag = 3;
-    char stemp1[TOPSZ];
-    Response_P(PSTR("{\"%s\":\"" D_JSON_VERSION " %s " D_JSON_FROM " %s\"}"), XdrvMailbox.command, TasmotaGlobal.version, GetOtaUrl(stemp1, sizeof(stemp1)));
+    Response_P(PSTR("{\"%s\":\"" D_JSON_VERSION " %s " D_JSON_FROM " %s\"}"), XdrvMailbox.command, TasmotaGlobal.version, stemp1);
   }
 #if defined(ESP32) && defined(USE_WEBCLIENT_HTTPS)
   else if (EspSingleOtaPartition() && !EspRunningFactoryPartition() && (1 == XdrvMailbox.data_len) && (2 == XdrvMailbox.payload)) {
