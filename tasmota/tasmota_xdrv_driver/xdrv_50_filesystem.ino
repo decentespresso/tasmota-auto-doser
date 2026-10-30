@@ -491,9 +491,9 @@ bool TfsLoadFile(const char *fname, uint8_t *buf, uint32_t len) {
 
   size_t flen = file.size();
   if (len > flen) { len = flen; }           // Adjust requested length to smaller file length
-  file.read(buf, len);
+  const size_t read = file.read(buf, len);
   file.close();
-  return true;
+  return read == len;
 }
 
 String TfsLoadString(const char *fname) {
