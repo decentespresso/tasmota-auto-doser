@@ -86,6 +86,19 @@ Grinder builds also enforce mains-powered network behavior:
 
 An authenticated TCP client keeps the main loop awake even while `Power1` is off. Existing installations are migrated once when a persisted value differs; the main loop does not write these settings repeatedly.
 
+## Empty-Grinder Commissioning
+
+Test with the grinder and no beans. `Power1 OFF`, `Relay.On=0`, and TCP `state=OFF` report software relay state. The firmware has no contact feedback and cannot detect welded contacts or prove that the outlet is disconnected from mains.
+
+1. Check the plug, socket, and grinder manufacturers' electrical limits, including motor starting/inrush current. A firmware-compatible GPIO template does not establish electrical suitability for a grinder.
+2. Empty the grinder and check that its manufacturer permits running it without beans. Keep each test brief and within its empty-running and duty-cycle limits. Keep an independent mains disconnection within reach, such as an accessible wall switch or plug. Do not open the housing or use exposed mains probes.
+3. Pair the HDS with the grinder disconnected. Disconnect mains power before connecting the empty grinder, prepare its own switch for operation according to its instructions, then restore power. Observe the motor after boot; it must stay stopped before an HDS `ON` command.
+4. Run an HDS dry cycle: confirm the motor starts when the scale sends `ON`, operating the grinder's own switch if needed. Gradually add test material to the dosing cup over several seconds to simulate grounds until the scale reaches `target - safety`. Keep that material out of the grinder. Confirm the motor stops at cutoff; an empty grinder alone adds no weight and will not trigger cutoff. Observe the motor itself, not only the web UI or a relay click.
+5. Check connection loss during a brief dry cycle: the motor must stop and stay stopped until a new HDS `ON` command. Repeat the stopped-motor observation after restarting the plug.
+6. If the motor keeps running after OFF or any check fails, disconnect mains power and stop. Resolve the fault before adding beans or using the grinder.
+
+Keep the independent mains disconnection accessible during use. Disconnect mains power before cleaning or servicing; a software OFF command is not electrical isolation.
+
 ## TCP Protocol
 
 Clients connect to port `31980`. Commands are ASCII lines ending in `\n` or `\r\n`.
@@ -145,23 +158,26 @@ On the HDS scale:
 7. Choose the plug by MAC address, for example `1C:69:20:0B:54:20`.
 8. Set `Target g`, `Safety g`, and `Zero Range`.
 9. Leave the menu with `Back`.
-10. Run a dry cycle with no grinder load.
-11. Connect the grinder only after dry tests pass.
+10. Complete [empty-grinder commissioning](#empty-grinder-commissioning) with no beans before dosing coffee.
 
 The scale stores the selected plug MAC, not the IP address. mDNS, hostname, and the cached IP address are only used to find the plug again.
 
 `Grinder On` forces Wi-Fi on boot. From the normal weight view, hold both buttons for 500 ms to open the `Grinder Plug` menu when grinder mode is on. Use `Target g` there for quick dose changes.
 
-Default HDS settings:
+### HDS Settings
+
+HDS custom builds from [openScale v3.1.15 source](https://github.com/decentespresso/openscale/blob/22219ec71349a809a5f6fbf0a5ff43c4ec7e2c0b/include/grinder_runtime.h#L38-L49) with the `Grind by weight` feature included define these source defaults. A standard HDS release image can omit grinder support.
 
 ```text
 Grinder: Off
 Target: 15.0 g
-Safety: 0.2 g
+Safety: 2.0 g
 Zero range: -1.0 g to 1.0 g
 Zero hold: 1000 ms
 Target tolerance: 0.5 g
 ```
+
+Read the values on your installed HDS before the dry test. Saved settings and adaptive safety can differ from these source defaults; other HDS versions can also differ. The plug firmware does not select these values or enforce a weight cutoff.
 
 The HDS cutoff threshold is:
 
@@ -226,25 +242,45 @@ Multiple plugs share the service type. Their mDNS instance names are unique thro
 
 The driver treats connection state, local IPv4 address, and BSSID as one network identity. A Wi-Fi reconnect, IP change, or BSSID change increments the network generation and invalidates the active client, listener, and mDNS service. This includes a roam where the DHCP address remains unchanged.
 
-Every controlled listener restart forces `Power1 OFF`, revokes TCP ownership, closes active and pending `BUSY` clients, stops the old socket, removes the mDNS service, recreates port `31980`, restores `TCP_NODELAY`, and advertises protocol version `1` again. The `server_started` state records intent only; it does not prevent recreation after a network generation changes.
+Every controlled listener restart forces `Power1 OFF`, revokes TCP ownership, closes active and pending `BUSY` clients, stops the old socket, removes the mDNS service, recreates port `31980`, restores `TCP_NODELAY`, and advertises protocol version `1` again. The `server_started` state is local driver bookkeeping; it does not prove remote HDS reachability or prevent recreation after a network generation changes.
 
-Network callbacks recover immediately after Tasmota reports usable connectivity. A five-second identity check catches missed roam notifications, so an IP or BSSID change is detected within five seconds. mDNS registration is attempted when the listener starts and retried every five seconds after failure. While the relay is off and no authenticated client is active, the service is removed and re-added every 60 seconds. Maintenance never interrupts an authenticated grinder connection.
+Wi-Fi callbacks queue events for Tasmota to process on the main thread. The grinder driver observes the resulting network generation and also checks IP/BSSID identity at five-second intervals. Recovery timing includes main-loop and network-stack scheduling; callbacks do not rebuild listeners themselves.
+
+The driver attempts mDNS registration when the listener starts. It retries a missing advertisement at five-second intervals while the relay is off and no HELLO-completed client is active. There is no periodic 60-second refresh. Listener restarts and responder recovery can cause a new registration attempt.
 
 `GrinderRestart` runs the same fail-safe TCP and mDNS recreation path without rebooting the plug. It is intended for field diagnosis when the Web UI works but port `31980` does not.
 
-`GrinderStatus` returns one JSON object with these groups:
+### GrinderStatus
+
+`GrinderStatus` returns one JSON object with these groups and fields:
 
 | Group | Contents |
 | --- | --- |
-| `Net` | connectivity, IP, subnet mask, gateway, BSSID, RSSI, network generation |
-| `TCP` | listener intent, server generation, client state, HELLO state, closing state, peer address, last receive age |
-| `mDNS` | advertisement and responder state |
-| `Relay` | TCP ownership and physical relay state |
-| `Heap` | current and minimum observed free heap |
-| `Last` | last event, network-change reason, close reason, and fail-safe OFF reason |
-| `Count` | network, listener, client, timeout, protocol, and mDNS counters |
+| `Net` | `Up`, `WL`, `IP`, `BSSID`, `RSSI`, `Gen`, `Link`, `Reason`, `RecoveryMs` |
+| `TCP` | `Listen`, `Gen`, `Client`, `Hello`, `Closing`, `PeerIP`, `PeerPort`, `RxAge` |
+| `mDNS` | `Ad`, `Up`, `MaxMs` |
+| `Relay` | TCP ownership and software relay state |
+| `Heap` | `Free`, `Min` |
+| `Loop` | `MaxGapMs` |
+| `Last` | `Event`, `Age`, `Net` |
+| `Count` | `NetUp`, `NetDn`, `Link`, `WiFiDn`, `LostIP`, `GotIP`, `Restart`, `MdnsFail` |
 
-For a same-IP failure, compare `Net.BSSID`, `Net.Gen`, `Last.Net`, `Count.BSSID`, `Count.Restart`, and `TCP.Gen`. A changed BSSID with the same `Net.IP` should still advance both generations.
+`GrinderStatus.TCP.Listen` reports the driver's local startup state. It does not prove TCP reachability from the HDS. `GrinderStatus.mDNS.Ad` records successful local service/TXT registration, not discovery from another device. Confirm remote TCP communication through an HDS `HELLO`/`PING` exchange with the expected MAC, and confirm discovery from the same local network.
+
+`GrinderStatus.Net.Up` reports a connected Wi-Fi station with IPv4. `GrinderStatus.Net.RecoveryMs` measures the captured Wi-Fi outage through the got-IP event; it is not a TCP or discovery recovery measurement. `GrinderStatus.Loop.MaxGapMs` and `GrinderStatus.mDNS.MaxMs` help identify main-loop or mDNS operation delays.
+
+### GrinderDiag
+
+`GrinderDiag` supplies the detailed counters and close/OFF reasons:
+
+| Group | Contents |
+| --- | --- |
+| `Change` | `IP`, `BSSID` |
+| `TCP` | `Start`, `Stop`, `Accept`, `Busy`, `Close`, `HelloTO`, `HeartbeatTO`, `Protocol` |
+| `mDNS` | `Try`, `Ok`, `Fail`, `Down`, `SvcFail`, `TxtFail` |
+| `Last` | `Close`, `Off` |
+
+For a same-IP failure, compare `GrinderStatus.Net.BSSID`, `GrinderStatus.Net.Gen`, `GrinderStatus.Last.Net`, `GrinderStatus.Count.Restart`, `GrinderStatus.TCP.Gen`, and `GrinderDiag.Change.BSSID`. A detected BSSID change with the same IP should still advance the network and server generations. Use `GrinderDiag.Last.Close` and `GrinderDiag.Last.Off` for shutdown reasons, and `GrinderDiag.TCP.HelloTO`, `GrinderDiag.TCP.HeartbeatTO`, and `GrinderDiag.TCP.Protocol` for timeout/protocol counts.
 
 ## HDS Troubleshooting
 
@@ -255,16 +291,18 @@ dns-sd -B _grinderplug._tcp local
 dns-sd -L "INSTANCE NAME HERE" _grinderplug._tcp local
 ```
 
+Resolve the service's SRV record for the hostname and port. Its SRV port is `31980`; the port is not a TXT key.
+
 Expected TXT data:
 
 ```text
-port=31980
 mac=<plug_mac>
+name=<hostname>
 model=<build_model>
 proto=1
 ```
 
-If `_http._tcp` appears but `_grinderplug._tcp` does not, the plug service advertisement is wrong.
+If `_http._tcp` appears but `_grinderplug._tcp` does not, check the grinder advertisement flags and counters above, then check multicast delivery from that client. The HTTP advertisement alone does not establish that grinder discovery works.
 
 If the scale shows `plug wait`, the selected plug cannot be reached. Check that the plug is powered, on the same WLAN, listening on port `31980`, and still using the saved hostname or cached IP. If the IP changed and hostname lookup does not recover it, run `Select Plug` again.
 
@@ -276,7 +314,7 @@ If the scale shows `grinder error`, it entered fail-safe mode. Common causes are
 
 If weighing must stay responsive while the plug is offline, do not run full discovery in the background. Runtime lookup should use only the saved IP and saved hostname with short timeouts. Full mDNS discovery belongs in manual `Select Plug`.
 
-If the scale does not rearm, remove the filled cup, return the empty cup, and wait until weight is stable inside zero range for the zero hold time. The default zero hold is 1000 ms.
+If the scale does not rearm, remove the filled cup, return the empty cup, and wait until weight is stable inside zero range for your configured zero hold time.
 
 USB serial grinder logs use these prefixes:
 
@@ -330,24 +368,24 @@ Expected coverage:
 - `GrinderRestart` recreates the service while keeping the relay off
 - `GrinderStatus` exposes the required schema and counters
 
-The smoke test must run first with the grinder disconnected or with a harmless load. The mDNS probe should be repeated after `GrinderRestart` and after each controlled Wi-Fi or AP transition.
+Run the automated smoke test with the grinder disconnected. Use [empty-grinder commissioning](#empty-grinder-commissioning) for the brief motor checks. Repeat the mDNS probe after `GrinderRestart` and after each controlled Wi-Fi or AP transition.
 
 ### Athom EU V3 Hardware Validation
 
-Keep the grinder disconnected throughout these checks. Build availability does not establish hardware-tested status.
+Keep the grinder disconnected for steps 1 to 4. Use the empty grinder for the brief motor checks in step 5. Build availability does not establish hardware-tested status.
 
 1. Before upgrading, back up the Tasmota configuration and record the Wi-Fi settings, active template, and energy calibration. Confirm one normal `Relay 1` on GPIO5, the button on GPIO3, inverted link LED on GPIO6, and `CSE7766 Rx` for the HLW8032 meter on GPIO20 against Athom's published template.
 2. Upload the dedicated Athom OTA `.bin` through the Tasmota Web UI without resetting settings. Confirm the image label `athom-eu-v3-grinder`, retained Wi-Fi/template/calibration, and `Power1 OFF` after boot and a power cycle.
-3. Check the button and link LED; button or Web/HTTP `Power1 ON` attempts must not energize the relay. Confirm voltage, current, power, and energy readings remain available; use a harmless load for measurement checks.
+3. Check the button and link LED; button or Web/HTTP `Power1 ON` attempts must not energize the relay. Confirm voltage, current, power, and energy readings remain available.
 4. Run the mDNS probe with `--expected-model ATHOM_EU_V3`, the Athom plug's MAC, and its IP address. Run the existing smoke test against that IP and MAC to exercise TCP commands, second-client `BUSY`, disconnect, heartbeat timeout, and service recovery.
-5. Interrupt Wi-Fi during an authenticated TCP `ON` with a harmless load. Verify the relay turns off, stays off after reconnection, and discovery and TCP recover. Record the hardware and firmware versions and results before marking this target hardware-tested.
+5. Complete [empty-grinder commissioning](#empty-grinder-commissioning), including the connection-loss and restart checks. Confirm current, power, and energy readings respond during the brief motor run, and discovery and TCP recover after reconnection. Record the hardware and firmware versions and results before marking this target hardware-tested.
 
 ## Soak Test
 
-Run the logger for 8 to 12 hours with the grinder disconnected or a harmless load:
+Run the logger for 8 to 12 hours with the grinder disconnected:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/grinder_soak_test.ps1 -Ip 192.168.178.30 -ExpectedMac 1C:69:20:0B:54:20 -DurationHours 12 -Output grinder-soak.csv
 ```
 
-The logger performs repeated TCP sessions, runs periodic mDNS discovery, and records IP, BSSID, RSSI, network and server generations, restart and refresh counters, relay state, free heap, and minimum free heap. During the run, perform at least one controlled AP disconnect, reboot, or roam. Acceptance requires continuous `Power1 OFF` outside authenticated `ON`, TCP recovery within five seconds after usable Wi-Fi returns, mDNS recovery within the five-second retry window, no permanent `BUSY`, and no declining free-heap trend.
+The logger performs repeated TCP sessions, runs periodic mDNS discovery, and records IP, BSSID, RSSI, network and server generations, restart and mDNS failure counters, TCP/HTTP/discovery probe latency, maximum loop/mDNS operation delays, relay state, free heap, and minimum free heap. During the run, perform at least one controlled AP disconnect, reboot, or roam. Acceptance requires continuous `Power1 OFF` outside authenticated `ON`, TCP recovery within five seconds after usable Wi-Fi returns, mDNS recovery within the five-second retry window, no permanent `BUSY`, and no declining free-heap trend.
