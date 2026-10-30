@@ -281,6 +281,10 @@ function Test-RepeatedBusy() {
     $active = New-GrinderClient
     $hello = Send-GrinderCommand $active "HELLO $ScaleMac"
     for ($i = 0; $i -lt 20; $i++) {
+      $ping = Send-GrinderCommand $active 'PING'
+      if (-not (Is-OkState $ping 'OFF')) {
+        throw "Owner heartbeat failed during BUSY test: $ping"
+      }
       $busy = $null
       try {
         $busy = New-GrinderClient
@@ -306,8 +310,6 @@ function Test-NoHelloTimeout() {
   try {
     $silent = New-GrinderClient
     Start-Sleep -Milliseconds 1250
-    Close-GrinderClient $silent
-    $silent = $null
     $reconnect = New-GrinderClient
     $hello = Send-GrinderCommand $reconnect "HELLO $ScaleMac"
     $bye = Send-GrinderCommand $reconnect 'BYE'
@@ -327,8 +329,6 @@ function Test-ReconnectAfterHeartbeat() {
     $stale = New-GrinderClient
     $hello = Send-GrinderCommand $stale "HELLO $ScaleMac"
     Start-Sleep -Milliseconds 2200
-    Close-GrinderClient $stale
-    $stale = $null
     $reconnect = New-GrinderClient
     $nextHello = Send-GrinderCommand $reconnect "HELLO $ScaleMac"
     $bye = Send-GrinderCommand $reconnect 'BYE'
@@ -342,12 +342,21 @@ function Test-ReconnectAfterHeartbeat() {
 
 function Test-ControlledRestart() {
   Set-RelayOff
-  $response = Invoke-TasmotaCommand 'GrinderRestart'
-  Start-Sleep -Milliseconds 250
-  $status = $response.GrinderStatus
-  $power = Get-PowerState
-  $pass = ($null -ne $status) -and ([bool]$status.TCP.Listen) -and ($power -eq 'OFF')
-  Add-Result 'Controlled service restart stays OFF' $pass "serverGeneration=$($status.TCP.Gen) Power1=$power"
+  $before = (Invoke-TasmotaCommand 'GrinderStatus').GrinderStatus
+  $conn = $null
+  try {
+    $response = Invoke-TasmotaCommand 'GrinderRestart'
+    Start-Sleep -Milliseconds 250
+    $status = $response.GrinderStatus
+    $conn = New-GrinderClient
+    $hello = Send-GrinderCommand $conn "HELLO $ScaleMac"
+    $bye = Send-GrinderCommand $conn 'BYE'
+    $power = Get-PowerState
+    $pass = ($null -ne $before.TCP.Gen) -and ($null -ne $status) -and ([bool]$status.TCP.Listen) -and ($status.TCP.Gen -gt $before.TCP.Gen) -and (Is-OkState $hello 'OFF') -and (Is-OkState $bye 'OFF') -and ($power -eq 'OFF')
+    Add-Result 'Controlled service restart stays OFF' $pass "serverGeneration=$($before.TCP.Gen)->$($status.TCP.Gen) hello=$hello bye=$bye Power1=$power"
+  } finally {
+    Close-GrinderClient $conn
+  }
 }
 
 function Test-Diagnostics() {
