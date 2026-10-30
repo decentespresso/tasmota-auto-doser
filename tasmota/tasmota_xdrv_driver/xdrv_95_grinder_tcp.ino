@@ -118,6 +118,7 @@ struct {
   bool authorized_on = false;
   bool close_pending = false;
   bool tcp_power_command = false;
+  bool suspended = false;
 } GrinderTcp;
 
 void GrinderTcpRestartServer(const char *reason);
@@ -593,6 +594,10 @@ void GrinderTcpKeepAwakeWhileConnected(void) {
 }
 
 void GrinderTcpLoop(void) {
+  if (GrinderTcp.suspended || TasmotaGlobal.restart_flag || TasmotaGlobal.ota_state_flag) {
+    GrinderTcpRelayOff("maintenance");
+    return;
+  }
   GrinderTcpObserveDiagnostics();
   GrinderTcpCheckNetwork();
   GrinderTcpFinishActiveClose();
@@ -622,6 +627,9 @@ void GrinderTcpLoop(void) {
 #include "tasmota_xdrv_driver/xdrv_95_grinder_tcp_recovery.h"
 
 void GrinderTcpStart(void) {
+  if (GrinderTcp.suspended || TasmotaGlobal.restart_flag || TasmotaGlobal.ota_state_flag) {
+    return;
+  }
   if (!GrinderTcpCacheIdentity()) {
     GrinderTcpRelayOff();
     AddLog(LOG_LEVEL_ERROR, PSTR("GTC: Invalid MAC"));
@@ -745,6 +753,17 @@ bool Xdrv95(uint32_t function) {
       break;
     case FUNC_NETWORK_DOWN:
       GrinderTcpNetworkDown();
+      break;
+    case FUNC_ABOUT_TO_RESTART:
+    case FUNC_INTERRUPT_STOP:
+      GrinderTcp.suspended = true;
+      GrinderTcpStop("maintenance");
+      break;
+    case FUNC_INTERRUPT_START:
+      GrinderTcp.suspended = false;
+      if (GrinderTcpNetworkUsable()) {
+        GrinderTcpStart();
+      }
       break;
     case FUNC_SAVE_BEFORE_RESTART:
       GrinderTcpStop("device_restart");
