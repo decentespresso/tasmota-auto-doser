@@ -34,6 +34,7 @@ jobs:
           ./build/host-tests/grinder_tcp_driver_sim_test
           python3 -B tools/test_grinder_mdns_probe.py -v
           python3 tools/test_grinder_update_lifecycle.py
+          python3 tools/test_grinder_empty_ota.py
       - name: Test release publication offline
         run: python3 -B tools/grinder_release_publish_test.py
 
