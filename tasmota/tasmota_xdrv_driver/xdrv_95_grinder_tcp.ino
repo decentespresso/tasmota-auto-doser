@@ -607,6 +607,7 @@ void GrinderTcpLoop(void) {
     GrinderTcpStop("unsupported_layout");
     return;
   }
+  GrinderTcpCheckTimeout();
   GrinderTcpReadClient();
   GrinderTcpFlushActiveTx();
   GrinderTcpCheckTimeout();

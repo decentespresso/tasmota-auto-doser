@@ -36,6 +36,7 @@ jobs:
           python3 tools/test_grinder_update_lifecycle.py
           python3 tools/test_grinder_empty_ota.py
           python3 tools/test_wifi_config_scan.py
+          python3 tools/test_grinder_session_deadlines.py
       - name: Test release publication offline
         run: python3 -B tools/grinder_release_publish_test.py
 
