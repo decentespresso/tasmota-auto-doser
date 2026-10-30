@@ -651,7 +651,7 @@ void GrinderTcpStart(void) {
   GrinderTcpDiag.server_starts++;
   GrinderTcpDiag.server_generation++;
   GrinderTcpRecordEvent("server_started");
-  GrinderTcp.mdns_retry_at = 0;
+  GrinderTcp.mdns_retry_at = millis();
   GrinderTcpAdvertise();
   AddLogServerActive(PSTR("Grinder TCP"));
 }
