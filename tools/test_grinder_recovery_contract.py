@@ -57,7 +57,7 @@ def main():
     assert "Settings->flag5.wifi_no_sleep = 1;" in DRIVER
     assert "Settings->flag3.use_wifi_rescan = 0;" in DRIVER
     ordered(
-        DRIVER[DRIVER.index("void GrinderTcpStop(const char *reason)"):],
+        DRIVER[DRIVER.index("void GrinderTcpStop(const char *reason) {"):],
         "GrinderTcpRelayOff(reason);",
         "GrinderTcpCloseActiveNow(false, reason);",
         "GrinderTcpStopClosingClients();",
@@ -65,7 +65,7 @@ def main():
         "GrinderTcpRemoveMdnsService();",
     )
     ordered(
-        DRIVER[DRIVER.index("void GrinderTcpRestartServer(const char *reason)"):],
+        DRIVER[DRIVER.index("void GrinderTcpRestartServer(const char *reason) {"):],
         "GrinderTcpStop(reason);",
         "GrinderTcpStart();",
     )
