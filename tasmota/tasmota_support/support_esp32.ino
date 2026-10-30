@@ -110,22 +110,22 @@ size_t NvmLoad(const char *sNvsName, const char *sName, void *pSettings, unsigne
   return (ESP_OK == result) ? size : 0;
 }
 
-void NvmSave(const char *sNvsName, const char *sName, const void *pSettings, unsigned nSettingsLen) {
+bool NvmSave(const char *sNvsName, const char *sName, const void *pSettings, unsigned nSettingsLen) {
 #ifdef USE_WEBCAM
   WcInterrupt(0);  // Stop stream if active to fix TG1WDT_SYS_RESET
 #endif
   nvs_handle_t handle;
   esp_err_t result = nvs_open(sNvsName, NVS_READWRITE, &handle);
-  if (result != ESP_OK) {
-    AddLog(LOG_LEVEL_DEBUG, PSTR("NVS: Error %d"), result);
-  } else {
-    nvs_set_blob(handle, sName, pSettings, nSettingsLen);
-    nvs_commit(handle);
+  if (ESP_OK == result) {
+    result = nvs_set_blob(handle, sName, pSettings, nSettingsLen);
+    if (ESP_OK == result) { result = nvs_commit(handle); }
     nvs_close(handle);
   }
+  if (ESP_OK != result) { AddLog(LOG_LEVEL_INFO, PSTR("NVS: Save failed %d"), result); }
 #ifdef USE_WEBCAM
   WcInterrupt(1);
 #endif
+  return ESP_OK == result;
 }
 
 int32_t NvmErase(const char *sNvsName) {
@@ -251,11 +251,13 @@ uint32_t SettingsRead(void *data, size_t size) {
   return 0;
 }
 
-void SettingsWrite(const void *pSettings, unsigned nSettingsLen) {
+bool SettingsWrite(const void *pSettings, unsigned nSettingsLen) {
 #ifdef USE_UFILESYS
-  TfsSaveFile(TASM_FILE_SETTINGS, (const uint8_t*)pSettings, nSettingsLen);
+  const bool file_saved = TfsSaveFile(TASM_FILE_SETTINGS, (const uint8_t*)pSettings, nSettingsLen);
+#else
+  const bool file_saved = true;
 #endif
-  NvmSave("main", "Settings", pSettings, nSettingsLen);
+  return NvmSave("main", "Settings", pSettings, nSettingsLen) && file_saved;
 }
 
 void QPCRead(void *pSettings, unsigned nSettingsLen) {

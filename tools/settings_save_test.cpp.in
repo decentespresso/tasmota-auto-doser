@@ -1,0 +1,197 @@
+#include <algorithm>
+#include <cassert>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <map>
+#include <string>
+#include <vector>
+
+#define PSTR(value) value
+#define D_LOG_CONFIG "CFG: "
+#define D_COUNT "Count"
+#define D_BYTES "Bytes"
+#define TASM_FILE_SETTINGS "/.settings"
+constexpr int ESP_OK = 0;
+constexpr int NVS_READWRITE = 1;
+constexpr int LOG_LEVEL_INFO = 2;
+constexpr int LOG_LEVEL_DEBUG = 4;
+constexpr unsigned FUNC_SAVE_SETTINGS = 1;
+constexpr uint32_t EEPROM_LOCATION = 200;
+constexpr uint32_t SETTINGS_LOCATION = 253;
+constexpr unsigned CFG_ROTATES = 7;
+constexpr uint32_t START_VALID_TIME = 1000;
+constexpr uint32_t POWER_MASK = 0xFFFFFFFF;
+constexpr unsigned MAX_PULSETIMERS = 32;
+using nvs_handle_t = int;
+using esp_err_t = int;
+using power_t = uint32_t;
+
+struct Header {
+  uint16_t cfg_holder = 4617;
+  uint16_t cfg_size = 4096;
+  uint32_t save_flag = 42;
+  uint32_t version = 0x0F050001;
+  uint16_t cfg_crc = 0;
+  uint16_t save_data = 1;
+  uint32_t cfg_timestamp = 0;
+  uint32_t calibration = 100;
+  uint32_t power = 0;
+  struct { bool save_state = false; } flag;
+  uint16_t pulse_timer[MAX_PULSETIMERS] = {};
+};
+struct TSettings : Header {
+  uint8_t padding[4092 - sizeof(Header)] = {};
+  uint32_t cfg_crc32 = 0;
+};
+static_assert(sizeof(TSettings) == 4096);
+TSettings settings;
+auto Settings = &settings;
+struct {
+  bool stop_flash_rotate = false;
+  unsigned save_data_counter = 1;
+  unsigned devices_present = 1;
+  unsigned restart_flag = 0;
+  uint32_t power = 0;
+} TasmotaGlobal;
+uint32_t settings_location = EEPROM_LOCATION;
+uint32_t settings_crc32 = 0;
+uint32_t settings_save_retry = 0;
+uint32_t now_ms = 0;
+unsigned rtc_saves = 0;
+unsigned file_attempts = 0;
+unsigned nvs_attempts = 0;
+unsigned commits = 0;
+bool counter_disabled = false;
+bool file_open_ok = true;
+size_t write_limit = std::numeric_limits<size_t>::max();
+int open_result = ESP_OK;
+int set_result = ESP_OK;
+int commit_result = ESP_OK;
+std::vector<std::string> logs;
+std::map<std::string, std::vector<uint8_t>> files;
+std::vector<uint8_t> pending;
+std::vector<uint8_t> nvs;
+
+template<typename... Args>
+void AddLog(int, const char *format, Args...) { logs.emplace_back(format); }
+void XsnsXdrvCall(unsigned) {}
+void UpdateBackwardCompatibility() {}
+void RtcSettingsSave() { ++rtc_saves; }
+void CounterInterruptDisable(bool disabled) { counter_disabled = disabled; }
+uint32_t millis() { return now_ms; }
+uint32_t UtcTime() { return 100000; }
+bool TimeReached(uint32_t at) { return int32_t(now_ms - at) >= 0; }
+bool CommandsReady() { return true; }
+uint32_t GetSettingsCrc32();
+
+class File {
+  std::vector<uint8_t> *data;
+public:
+  explicit File(std::vector<uint8_t> *value) : data(value) {}
+  explicit operator bool() const { return data != nullptr; }
+  size_t write(const uint8_t *buffer, size_t length) {
+    const auto count = std::min(length, write_limit);
+    data->assign(buffer, buffer + count);
+    return count;
+  }
+  void close() {}
+};
+struct Filesystem {
+  File open(const char *name, const char *) {
+    ++file_attempts;
+    return File(file_open_ok ? &files[name] : nullptr);
+  }
+} filesystem;
+auto ffsp = &filesystem;
+unsigned ffs_type = 1;
+int nvs_open(const char *, int, nvs_handle_t *handle) {
+  ++nvs_attempts;
+  *handle = 1;
+  return open_result;
+}
+int nvs_set_blob(nvs_handle_t, const char *, const void *buffer, size_t length) {
+  if (set_result == ESP_OK) {
+    const auto bytes = static_cast<const uint8_t *>(buffer);
+    pending.assign(bytes, bytes + length);
+  }
+  return set_result;
+}
+int nvs_commit(nvs_handle_t) {
+  ++commits;
+  if (commit_result == ESP_OK) { nvs = pending; }
+  return commit_result;
+}
+void nvs_close(nvs_handle_t) {}
+
+__PRODUCTION__
+
+bool saved_log() {
+  return std::any_of(logs.begin(), logs.end(), [](const auto &line) {
+    return line.find("CFG: Saved,") != std::string::npos;
+  });
+}
+
+void check_failure(unsigned failure, uint32_t start) {
+  settings = {};
+  settings_crc32 = GetSettingsCrc32();
+  const auto previous_crc = settings_crc32;
+  Settings->calibration = 123456;
+  settings_save_retry = 0;
+  now_ms = start;
+  logs.clear();
+  nvs_attempts = 0;
+  file_attempts = 0;
+  commits = 0;
+  open_result = failure == 0 ? -1 : ESP_OK;
+  set_result = failure == 1 ? -2 : ESP_OK;
+  commit_result = failure == 2 ? -3 : ESP_OK;
+  file_open_ok = failure != 3;
+  write_limit = failure == 4 ? 2 : std::numeric_limits<size_t>::max();
+  SettingsSave(0);
+  assert(settings_crc32 == previous_crc);
+  assert(Settings->calibration == 123456);
+  assert(!counter_disabled);
+  assert(!saved_log());
+  assert(std::any_of(logs.begin(), logs.end(), [](const auto &line) {
+    return line.find("Save failed") != std::string::npos;
+  }));
+  if (failure == 1) { assert(commits == 0); }
+  const auto attempted_files = file_attempts;
+  const auto attempted_nvs = nvs_attempts;
+  for (unsigned second = 1; second < 60; ++second) {
+    now_ms = start + second * 1000;
+    AutoSave();
+    assert(file_attempts == attempted_files);
+    assert(nvs_attempts == attempted_nvs);
+  }
+  open_result = ESP_OK;
+  set_result = ESP_OK;
+  commit_result = ESP_OK;
+  file_open_ok = true;
+  write_limit = std::numeric_limits<size_t>::max();
+  now_ms = start + 60000;
+  AutoSave();
+  assert(settings_crc32 == GetSettingsCrc32());
+  assert(saved_log());
+  assert(!counter_disabled);
+  assert(nvs.size() == sizeof(settings));
+  assert(std::memcmp(nvs.data(), &settings, sizeof(settings)) == 0);
+#ifdef USE_UFILESYS
+  assert(files[TASM_FILE_SETTINGS].size() == sizeof(settings));
+  assert(std::memcmp(files[TASM_FILE_SETTINGS].data(), &settings, sizeof(settings)) == 0);
+#endif
+  const auto successful_attempts = nvs_attempts;
+  AutoSave();
+  assert(nvs_attempts == successful_attempts);
+}
+
+int main() {
+  for (const auto start : {0U, 0xFFFFFF00U}) {
+    for (unsigned failure = 0; failure < 3; ++failure) { check_failure(failure, start); }
+#ifdef USE_UFILESYS
+    check_failure(3, start);
+    check_failure(4, start);
+#endif
+  }
+}

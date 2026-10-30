@@ -223,6 +223,7 @@ const uint8_t CFG_ROTATES = 7;      // Number of flash sectors used (handles upl
 
 uint32_t settings_location = EEPROM_LOCATION;
 uint32_t settings_crc32 = 0;
+uint32_t settings_save_retry = 0;
 uint32_t settings_size = 0;
 uint8_t *settings_buffer = nullptr;
 uint8_t config_xor_on_set = CONFIG_FILE_XOR;
@@ -781,11 +782,18 @@ void SettingsSave(uint8_t rotate) {
     AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_CONFIG D_SAVED_TO_FLASH_AT " %X, " D_COUNT " %d, " D_BYTES " %d"), settings_location, Settings->save_flag, sizeof(TSettings));
 #endif  // ESP8266
 #ifdef ESP32
-    SettingsWrite(Settings, sizeof(TSettings));
-    AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_CONFIG "Saved, " D_COUNT " %d, " D_BYTES " %d"), Settings->save_flag, sizeof(TSettings));
+    const bool saved = SettingsWrite(Settings, sizeof(TSettings));
+    settings_save_retry = saved ? 0 : millis() + 60000;
+    if (saved) {
+      AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_CONFIG "Saved, " D_COUNT " %d, " D_BYTES " %d"), Settings->save_flag, sizeof(TSettings));
+    } else {
+      AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_CONFIG "Save failed; retry in 60 seconds"));
+    }
+#else
+    const bool saved = true;
 #endif  // ESP32
 
-    settings_crc32 = Settings->cfg_crc32;
+    if (saved) { settings_crc32 = Settings->cfg_crc32; }
   }
 #endif  // FIRMWARE_MINIMAL
   RtcSettingsSave();
