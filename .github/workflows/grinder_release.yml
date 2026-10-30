@@ -35,6 +35,7 @@ jobs:
           python3 -B tools/test_grinder_mdns_probe.py -v
           python3 tools/test_grinder_update_lifecycle.py
           python3 tools/test_grinder_empty_ota.py
+          python3 tools/test_wifi_config_scan.py
       - name: Test release publication offline
         run: python3 -B tools/grinder_release_publish_test.py
 
