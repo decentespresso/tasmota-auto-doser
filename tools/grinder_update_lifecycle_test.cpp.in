@@ -177,7 +177,10 @@ bool GrinderTcpNetworkUsable() { return network_usable; }
 void GrinderTcpRecordFailSafe(const char *) {}
 void GrinderTcpRecordEvent(const char *) {}
 void GrinderTcpRecordClose(const char *) {}
-void strlcpy(char *output, const char *input, size_t size) { std::snprintf(output, size, "%s", input); }
+size_t strlcpy(char *output, const char *input, size_t size) {
+  std::snprintf(output, size, "%s", input);
+  return std::strlen(input);
+}
 void GrinderTcpLineReset(GrinderTcpLineReader *) {}
 void GrinderTcpRemoveMdnsService() {}
 void GrinderTcpAdvertise() {}

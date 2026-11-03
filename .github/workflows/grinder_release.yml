@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GRINDER_VARIANTS: '["tasmota32-nous-a6t-grinder", "tasmota32-grinder", "tasmota32c3-athom-eu-v3-grinder"]'
+  GRINDER_VARIANTS: '["tasmota32-nous-a6t-grinder", "tasmota32-grinder", "tasmota32c3-athom-v3-grinder"]'
 
 jobs:
   host-tests:

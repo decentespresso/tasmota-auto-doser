@@ -48,7 +48,10 @@ uint32_t url_writes = 0, upgrade_commands = 0, upgrade_forms = 0, started_pages 
 uint32_t ESP_getChipId() { return 1234; }
 const char *SettingsText(uint32_t) { return stored_url.c_str(); }
 void SettingsUpdateText(uint32_t, const char *value) { stored_url = value; ++url_writes; }
-void strlcpy(char *output, const char *input, size_t size) { std::snprintf(output, size, "%s", input); }
+size_t strlcpy(char *output, const char *input, size_t size) {
+  std::snprintf(output, size, "%s", input);
+  return std::strlen(input);
+}
 bool NewerVersion(const char *value) { return std::strcmp(value, "99.0.0") == 0; }
 bool EspSingleOtaPartition() { return true; }
 bool EspRunningFactoryPartition() { return false; }
