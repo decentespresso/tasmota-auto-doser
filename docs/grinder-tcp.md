@@ -8,13 +8,15 @@ This project adds a native Tasmota driver for grinder control from an HDS scale 
 | --- | --- | --- |
 | `tasmota32-nous-a6t-grinder` | `nous-a6t-grinder` | Tested NOUS A6T compatibility build |
 | `tasmota32-grinder` | `grinder-tcp32` | Generic classic ESP32 single-relay build |
-| `tasmota32c3-athom-eu-v3-grinder` | `athom-eu-v3-grinder` | Athom ESP32-C3 EU Plug V3 (PG01V3); pending hardware validation |
+| `tasmota32c3-athom-v3-grinder` | `athom-v3-grinder` | Athom ESP32-C3 Plug V3 (EU, UK and US variants); pending hardware validation |
 
-All three builds enable `USE_GRINDER_TCP`, listen on TCP port `31980`, advertise `_grinderplug._tcp.local`, and keep Web UI file upload updates available. The Athom build advertises model `ATHOM_EU_V3` and uses the same protocol and safety defaults as the classic ESP32 builds.
+All three builds enable `USE_GRINDER_TCP`, listen on TCP port `31980`, advertise `_grinderplug._tcp.local`, and keep Web UI file upload updates available. The Athom build retains model `ATHOM_EU_V3` for compatibility with existing clients and uses the same protocol and safety defaults as the classic ESP32 builds.
+
+The `v1.1.0` Athom release still reports image label `athom-eu-v3-grinder`; only its download filename was renamed, not the binary contents.
 
 The generic build is for classic ESP32 Tasmota devices only. It is not for ESP8266, ESP32-C3, ESP32-S2, ESP32-S3, ESP32-C6, dimmers, shutters, multi-relay devices, or bistable relay devices. Those chips need their own Tasmota binary families, and unsupported relay layouts are rejected at runtime.
 
-Use the dedicated C3 image only for the Athom Tasmota ESP32-C3 EU Plug V3. Do not upload either classic ESP32 image to this plug. Other C3 devices and Athom V2 or C5 models remain outside the supported device list.
+Use the dedicated C3 image only for the Athom Tasmota ESP32-C3 Plug V3 (EU, UK and US variants). Do not upload either classic ESP32 image to this plug. Other C3 devices and Athom V2 or C5 models remain outside the supported device list.
 
 ## Hardware Support
 
@@ -34,7 +36,7 @@ Current support status:
 | Device | Status | Notes |
 | --- | --- | --- |
 | NOUS A6T | Tested target | Classic ESP32, Tasmota pre-installed, `Relay 1` on GPIO13 |
-| Athom EU Plug V3 (PG01V3) | Dedicated build; not hardware-tested here | ESP32-C3, 4 MB flash, normal `Relay 1` on GPIO5; preserve factory template and calibration |
+| Athom Plug V3 (EU, UK and US variants) | Dedicated build; not hardware-tested here | ESP32-C3, 4 MB flash, normal `Relay 1` on GPIO5; preserve factory template and calibration |
 | NOUS A8T | Expected candidate | Same single-relay ESP32 layout class as A6T; not hardware-tested here |
 | Shelly Plus Plug S | Expected candidate | Classic ESP32 with one `Relay 1`; some stock firmware versions cannot OTA-flash to Tasmota |
 | Sonoff POWR316 / POWR316D | Expected candidate | Classic ESP32 with one `Relay 1`; usually serial flashing, inline module form factor |
@@ -331,7 +333,7 @@ USB serial grinder logs use these prefixes:
 
 For normal flashing, download a release asset from [GitHub Releases](https://github.com/decentespresso/tasmota-auto-doser/releases/latest). Use `tasmota32-nous-a6t-grinder.bin` for NOUS A6T and `tasmota32-grinder.bin` for validated generic classic ESP32 single-relay plugs.
 
-For the Athom Tasmota ESP32-C3 EU Plug V3, use `tasmota32c3-athom-eu-v3-grinder.bin`. Back up its Tasmota configuration before the Web UI upload. This build uses the plug's saved GPIO template and calibration, not an embedded Athom template. After a factory reset, restore the correct template and calibration before use; the grinder service will not start without a supported relay layout.
+For the Athom Tasmota ESP32-C3 Plug V3 (EU, UK and US variants), use `tasmota32c3-athom-v3-grinder.bin`. Back up its Tasmota configuration before the Web UI upload. This build uses the plug's saved GPIO template and calibration, not an embedded Athom template. After a factory reset, restore the correct template and calibration before use; the grinder service will not start without a supported relay layout.
 
 ```powershell
 $env:PLATFORMIO_CORE_DIR = Join-Path $PWD '.pio-core-isolated'
@@ -340,7 +342,7 @@ $env:PYTHONIOENCODING='utf-8'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 pio run -e tasmota32-nous-a6t-grinder
 pio run -e tasmota32-grinder
-pio run -e tasmota32c3-athom-eu-v3-grinder
+pio run -e tasmota32c3-athom-v3-grinder
 ```
 
 Use the generated OTA `.bin` from `build_output/firmware` for web upload. Factory images are not published in normal releases; maintainers can build them from source for serial recovery.
@@ -370,12 +372,12 @@ Expected coverage:
 
 Run the automated smoke test with the grinder disconnected. Use [empty-grinder commissioning](#empty-grinder-commissioning) for the brief motor checks. Repeat the mDNS probe after `GrinderRestart` and after each controlled Wi-Fi or AP transition.
 
-### Athom EU V3 Hardware Validation
+### Athom V3 Hardware Validation
 
 Keep the grinder disconnected for steps 1 to 4. Use the empty grinder for the brief motor checks in step 5. Build availability does not establish hardware-tested status.
 
 1. Before upgrading, back up the Tasmota configuration and record the Wi-Fi settings, active template, and energy calibration. Confirm one normal `Relay 1` on GPIO5, the button on GPIO3, inverted link LED on GPIO6, and `CSE7766 Rx` for the HLW8032 meter on GPIO20 against Athom's published template.
-2. Upload the dedicated Athom OTA `.bin` through the Tasmota Web UI without resetting settings. Confirm the image label `athom-eu-v3-grinder`, retained Wi-Fi/template/calibration, and `Power1 OFF` after boot and a power cycle.
+2. Upload the dedicated Athom OTA `.bin` through the Tasmota Web UI without resetting settings. Confirm the image label `athom-v3-grinder` (`athom-eu-v3-grinder` on `v1.1.0`), retained Wi-Fi/template/calibration, and `Power1 OFF` after boot and a power cycle.
 3. Check the button and link LED; button or Web/HTTP `Power1 ON` attempts must not energize the relay. Confirm voltage, current, power, and energy readings remain available.
 4. Run the mDNS probe with `--expected-model ATHOM_EU_V3`, the Athom plug's MAC, and its IP address. Run the existing smoke test against that IP and MAC to exercise TCP commands, second-client `BUSY`, disconnect, heartbeat timeout, and service recovery.
 5. Complete [empty-grinder commissioning](#empty-grinder-commissioning), including the connection-loss and restart checks. Confirm current, power, and energy readings respond during the brief motor run, and discovery and TCP recover after reconnection. Record the hardware and firmware versions and results before marking this target hardware-tested.

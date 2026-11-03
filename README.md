@@ -16,7 +16,7 @@ Use:
 
 - `tasmota32-nous-a6t-grinder.bin` for the tested NOUS A6T plug.
 - `tasmota32-grinder.bin` for validated classic ESP32 plugs with exactly one normal `Relay1`.
-- `tasmota32c3-athom-eu-v3-grinder.bin` for the Athom Tasmota ESP32-C3 EU Plug V3 (PG01V3), pending hardware validation.
+- `tasmota32c3-athom-v3-grinder.bin` for the Athom Tasmota ESP32-C3 Plug V3 (EU, UK and US variants), pending hardware validation.
 
 Before flashing, disconnect the grinder. Back up the current Tasmota configuration, then upload the `.bin` file through the Tasmota web UI firmware upgrade page.
 
@@ -29,7 +29,7 @@ You also need HDS firmware with grinder support. The plug firmware only switches
 Device-specific builds:
 
 - NOUS A6T, tested with the `tasmota32-nous-a6t-grinder` build.
-- Athom Tasmota ESP32-C3 EU Plug V3 (PG01V3, 4 MB flash), with the `tasmota32c3-athom-eu-v3-grinder` build; not hardware-tested here. Keep the factory Tasmota GPIO template and calibration settings when upgrading.
+- Athom Tasmota ESP32-C3 Plug V3 (EU, UK and US variants, 4 MB flash), with the `tasmota32c3-athom-v3-grinder` build; not hardware-tested here. Keep the factory Tasmota GPIO template and calibration settings when upgrading.
 
 Expected candidates:
 
@@ -90,7 +90,7 @@ $env:PYTHONIOENCODING='utf-8'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 pio run -e tasmota32-nous-a6t-grinder
 pio run -e tasmota32-grinder
-pio run -e tasmota32c3-athom-eu-v3-grinder
+pio run -e tasmota32c3-athom-v3-grinder
 ```
 
 The generated OTA files are written under `build_output/firmware`.

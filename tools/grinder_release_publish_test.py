@@ -1,3 +1,4 @@
+import configparser
 import json
 from pathlib import Path
 import shutil
@@ -156,13 +157,28 @@ class ReleasePublicationTest(unittest.TestCase):
             self.publish()
         self.assertTrue(self.gh.draft)
 
+    def test_athom_build_and_release_use_region_neutral_name(self):
+        root = Path(__file__).resolve().parents[1]
+        variant = "tasmota32c3-athom-v3-grinder"
+        builds = configparser.ConfigParser(interpolation=None)
+        builds.read(root / "platformio_tasmota_env32.ini")
+        self.assertIn(f"env:{variant}", builds)
+        flags = builds[f"env:{variant}"]["build_flags"]
+        self.assertIn("athom-v3-grinder", flags)
+        self.assertIn("ATHOM_EU_V3", flags)
+        workflow = (root / ".github/workflows/grinder_release.yml").read_text()
+        self.assertIn(variant, json.loads(workflow_variants(workflow)))
+        for document in ("README.md", "docs/grinder-tcp.md", "docs/releasing.md"):
+            with self.subTest(document=document):
+                self.assertIn(f"{variant}.bin", (root / document).read_text())
+
     def test_workflow_matrix_and_publisher_share_two_or_three_variants(self):
         from grinder_release_publish import main
 
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/grinder_release.yml").read_text()
         declared_json = workflow_variants(workflow)
         development = tuple(name.removesuffix(".bin") for name in FIRMWARE)
-        overlays = (json.loads(declared_json), development, (*development, "tasmota32c3-athom-eu-v3-grinder"))
+        overlays = (json.loads(declared_json), development, (*development, "tasmota32c3-athom-v3-grinder"))
         for index, overlay in enumerate(overlays):
             with self.subTest(variants=len(overlay)):
                 overlay_workflow = workflow.replace(declared_json, json.dumps(overlay))
