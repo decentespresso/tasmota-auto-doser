@@ -1,16 +1,16 @@
 # Tasmota Grind by Weight Firmware
 
-Decent Espresso firmware for controlling a grinder with a Tasmota Wi-Fi plug from an HDS scale over a small local TCP protocol.
+Decent Espresso firmware for controlling a grinder from an HDS scale. The three grinder builds in this checkout use Bluetooth Low Energy (BLE) for grinder control. Tasmota still supports Wi-Fi maintenance and web firmware upload.
 
-This is not a general Tasmota distribution. Official Tasmota binaries do not include the grinder TCP driver.
+This is not a general Tasmota distribution. Official Tasmota binaries do not include the grinder driver.
 
-Latest firmware: [GitHub Releases](https://github.com/decentespresso/tasmota-auto-doser/releases/latest). License: [GPL-3.0-only](LICENSE.txt).
+For released Wi-Fi/TCP builds, use [GitHub Releases](https://github.com/decentespresso/tasmota-auto-doser/releases/latest) and the [TCP setup and protocol](docs/grinder-tcp.md). The experimental BLE builds below must be built from this checkout. License: [GPL-3.0-only](LICENSE.txt).
 
 ## Quick Install
 
 For a new NOUS A6T, follow the [step-by-step setup guide with screenshots](docs/plug-setup.md), from its first Wi-Fi connection through installing and checking our firmware.
 
-Download firmware from the [latest GitHub Release](https://github.com/decentespresso/tasmota-auto-doser/releases/latest).
+Build the firmware below for your plug model.
 
 Use:
 
@@ -20,15 +20,15 @@ Use:
 
 Before flashing, disconnect the grinder. Back up the current Tasmota configuration, then upload the `.bin` file through the Tasmota web UI firmware upgrade page.
 
-Do not use official Tasmota OTA binaries for grinder control. They do not contain this TCP driver.
+Do not use official Tasmota OTA binaries for grinder control. They do not contain the grinder driver.
 
-You also need HDS firmware with grinder support. The plug firmware only switches power; the HDS scale decides when to start and stop by weight.
+You also need HDS firmware with BLE grinder support. TCP-only HDS builds cannot control these plug builds. The HDS scale decides when to start and stop by weight.
 
 ## Supported Devices
 
 Device-specific builds:
 
-- NOUS A6T, tested with the `tasmota32-nous-a6t-grinder` build.
+- NOUS A6T, hardware-verified with the original TCP build. The BLE build still needs commissioning.
 - Athom Tasmota ESP32-C3 Plug V3 (EU, UK and US variants, 4 MB flash), with the `tasmota32c3-athom-v3-grinder` build; not hardware-tested here. Keep the factory Tasmota GPIO template and calibration settings when upgrading.
 
 Expected candidates:
@@ -42,19 +42,19 @@ Not supported by the current builds:
 - Other ESP32-C3 devices, ESP32-S2, ESP32-S3, ESP32-C6.
 - Multi-relay, bistable relay, dimmer, shutter, and vendor-MCU relay devices.
 
-See [docs/grinder-tcp.md](docs/grinder-tcp.md) for the device evidence table and smoke tests.
+See [the TCP hardware table](docs/grinder-tcp.md#hardware-support) for evidence from the previous firmware.
 
 ## How It Works
 
-The firmware adds a native TCP service on port `31980`. One scale connects, says `HELLO`, keeps the connection alive, and controls only `Power1`.
+The firmware advertises a BLE service and accepts one owner. The scale subscribes for replies, sends `HELLO`, and keeps the session alive. A second connection receives `BUSY` once it subscribes and cannot control the relay.
 
-The relay is off by default and may only turn on while one TCP client owns the plug. The firmware forces `Power1 OFF` on boot, Wi-Fi loss, TCP disconnect, heartbeat timeout, invalid input, `BYE`, `OFF`, duplicate `OFF`, and unsupported relay layout.
+The relay defaults to OFF. The firmware commands `Power1 OFF` on boot, owner disconnect, missing heartbeat, invalid input, `BYE`, `OFF` or `!`, maintenance, and unsupported relay layout.
 
-Non-TCP `Power1 ON` attempts from the web UI, HTTP API, MQTT, buttons, rules, timers, device groups, or retained state are blocked or immediately forced off.
+Only the active BLE owner can turn `Power1 ON`. The web UI, HTTP API, MQTT, buttons, rules, timers, and retained state cannot arm the grinder. Grinder control does not listen on TCP.
 
 On the HDS side, grinder mode starts only after the empty cup is stable, stops at cutoff, waits for cup removal before rearming, learns adaptive safety from valid shots, and keeps weighing responsive when the plug is offline.
 
-This is intended only for a trusted local WLAN. The plug MAC is an identity label, not authentication.
+Use this unauthenticated BLE service only in a trusted area. A nearby device in radio range can claim an unowned plug; the advertised MAC is an identity label, not authentication.
 
 ## HDS Scale Setup
 
@@ -62,24 +62,24 @@ First safe dry run:
 
 1. Flash the plug and leave the grinder disconnected.
 2. Confirm the Tasmota web UI shows `Power1 OFF`.
-3. Put the HDS and plug on the same Wi-Fi network.
+3. Place the HDS near the plug. No shared Wi-Fi network is needed for grinding.
 4. Open the HDS setup menu and enter `Grinder Plug`.
 5. Enable grinder mode.
 6. Use `Select Plug` and choose the plug MAC shown by discovery.
 7. Set `Target g` , `Safety g`, and `Zero Range`.
 8. Complete [empty-grinder commissioning](docs/grinder-tcp.md#empty-grinder-commissioning) with no beans before dosing coffee (`Target g - Safety g` is the cutoff).
 
-The HDS stores the selected plug by MAC address and verifies the plug MAC returned by the TCP protocol before using it. The plug MAC is visible on the Tasmota web UI status pages.
+The HDS stores the selected plug by its factory Wi-Fi station MAC, which is advertised over BLE and verified in `HELLO` replies. The same MAC is visible on the Tasmota web UI status pages.
 
 Check the target, safety, zero range, and zero hold values on your installed HDS before the dry test. Use the [versioned source defaults](docs/grinder-tcp.md#hds-settings) as a reference; saved settings and adaptive safety can differ.
 
-Full setup notes are in [docs/grinder-tcp.md](docs/grinder-tcp.md).
+See the [BLE protocol and checks](docs/grinder-ble.md). The older commissioning guide uses TCP commands; exercise the equivalent checks over BLE.
 
 ## Versioning
 
 Public project releases use semantic versions, starting with `v1.0.0`.
 
-The firmware still reports the upstream Tasmota base version plus the image name, for example `15.5.0.1(nous-a6t-grinder)`. That means the build is based on Tasmota `15.5.0.1`; the public release version is the GitHub release tag.
+The firmware reports the upstream Tasmota base version plus the image name, for example `15.5.0.1(nous-a6t-grinder-ble)`. The public release version is the GitHub release tag.
 
 ## Build From Source
 

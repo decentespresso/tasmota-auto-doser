@@ -1361,6 +1361,11 @@ void WifiCheckIp(void) {
   } else {
     WifiSetState(0);
     uint8_t wifi_config_tool = Settings->sta_config;
+#ifdef USE_GRINDER_BLE
+    if (wifi_config_tool != WIFI_WAIT) {
+      wifi_config_tool = WIFI_RETRY;
+    }
+#endif
     Wifi.status = (Wifi.retry &1) ? WiFi.status() : 0;  // Skip every second to reset result WiFi.status()
     switch (Wifi.status) {
       case WL_CONNECTED:
@@ -1396,14 +1401,18 @@ void WifiCheckIp(void) {
         if (!Wifi.retry || ((Wifi.retry_init / 2) == Wifi.retry)) {
           AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_WIFI D_CONNECT_FAILED_AP_TIMEOUT));
           Settings->wifi_channel = 0;  // Disable stored AP
+#ifndef USE_GRINDER_BLE
           Wifi.max_retry++;
           if (100 == Wifi.max_retry) {  // Restart after 100 * (WIFI_RETRY_OFFSET_SEC + MAC) / 2 seconds
             TasmotaGlobal.restart_flag = 2;
           }
+#endif
         } else {
           if (!strlen(SettingsText(SET_STASSID1)) && !strlen(SettingsText(SET_STASSID2))) {
             Settings->wifi_channel = 0;  // Disable stored AP
+#ifndef USE_GRINDER_BLE
             wifi_config_tool = WIFI_MANAGER;  // Skip empty SSIDs and start Wifi config tool
+#endif
             Wifi.retry = 0;
           } else {
             AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_WIFI D_ATTEMPTING_CONNECTION));

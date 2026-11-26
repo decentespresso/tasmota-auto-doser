@@ -30,6 +30,9 @@
 #ifdef USE_GRINDER_TCP
 void GrinderTcpStop(const char *reason);
 #endif
+#ifdef USE_GRINDER_BLE
+bool GrinderTcpRelayStateOn(void);
+#endif
 
 // Enable below demo feature only if defines USE_UNISHOX_COMPRESSION and USE_SCRIPT_WEB_DISPLAY are disabled
 //#define USE_WEB_SSE
@@ -761,6 +764,9 @@ void WifiManagerBegin(bool reset_only) {
 
 void PollDnsWebserver(void) {
   if (DnsServer) { DnsServer->processNextRequest(); }
+#ifdef USE_GRINDER_BLE
+  if (GrinderTcpRelayStateOn()) { return; }
+#endif
   if (Webserver) { Webserver->handleClient(); }
 }
 
