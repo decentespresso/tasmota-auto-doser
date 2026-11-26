@@ -8,7 +8,7 @@ For released Wi-Fi/TCP builds, use [GitHub Releases](https://github.com/decentes
 
 ## Quick Install
 
-For a new NOUS A6T, follow the [step-by-step setup guide with screenshots](docs/plug-setup.md), from its first Wi-Fi connection through installing and checking our firmware.
+For a new NOUS A6T, the [step-by-step setup guide with screenshots](docs/plug-setup.md) covers Wi-Fi setup, configuration backup, and firmware upload. Use the [BLE checks](docs/grinder-ble.md#verification) after uploading a BLE build.
 
 Build the firmware below for your plug model.
 

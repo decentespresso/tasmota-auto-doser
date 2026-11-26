@@ -2,6 +2,8 @@
 
 Connect a new NOUS A6T to your Wi-Fi network, then install the Decent Espresso grinder firmware through its browser interface. You do not need to open the plug, connect a USB cable, or install the NOUS app.
 
+This guide's grinder checks and same-network pairing instructions describe TCP firmware. For a BLE build, follow steps 1 through 6 and the file upload in step 8 with the locally built `tasmota32-nous-a6t-grinder.bin`, then use the [BLE setup and checks](grinder-ble.md#verification). Wi-Fi is only needed for browser setup and maintenance.
+
 Keep the grinder disconnected throughout setup. Do not open the plug's housing.
 
 If you have already tried setup, go to [Find the plug on your network](#find-the-plug-on-your-network) or [Fix incorrect Wi-Fi details](#fix-incorrect-wi-fi-details). Try Wi-Fi recovery before a factory reset.
