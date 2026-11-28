@@ -1266,7 +1266,14 @@ void PerformEverySecond(void)
   WifiPollNtp();
 
 #ifdef ESP32
+#ifdef USE_GRINDER_BLE
+  if (GrinderBleControlActive()) { return; }
+  static bool sketchSizePending = true;
+  if (sketchSizePending && TasmotaGlobal.uptime >= 11) {
+    sketchSizePending = false;
+#else
   if (11 == TasmotaGlobal.uptime) {  // Perform one-time ESP32 houskeeping
+#endif
     ESP_getSketchSize();             // Init sketchsize as it can take up to 2 seconds
   }
 #endif
@@ -1654,6 +1661,9 @@ void Every250mSeconds(void)
     }
     break;
   case 2:                                                 // Every x.5 second
+#ifdef USE_GRINDER_BLE
+    if (GrinderBleControlActive()) { break; }
+#endif
     if (Settings->flag4.network_wifi) {
       WifiCheck(TasmotaGlobal.wifi_state_flag);
       TasmotaGlobal.wifi_state_flag = WIFI_RESTART;
@@ -1662,6 +1672,9 @@ void Every250mSeconds(void)
     }
     break;
   case 3:
+#ifdef USE_GRINDER_BLE
+    if (GrinderBleControlActive()) { break; }
+#endif
     {
       if (!TasmotaGlobal.global_state.network_down) {
 #ifdef FIRMWARE_MINIMAL

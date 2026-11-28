@@ -761,6 +761,9 @@ void WifiManagerBegin(bool reset_only) {
 
 void PollDnsWebserver(void) {
   if (DnsServer) { DnsServer->processNextRequest(); }
+#ifdef USE_GRINDER_BLE
+  if (GrinderBleControlActive()) { return; }
+#endif
   if (Webserver) { Webserver->handleClient(); }
 }
 
@@ -4752,6 +4755,9 @@ bool Xdrv01(uint32_t function) {
       if (Web.initial_config) {
         Wifi.config_counter = 200;    // Do not restart the device if it has SSId Blank
       }
+#ifdef USE_GRINDER_BLE
+      if (GrinderBleControlActive()) { break; }
+#endif
       if (Wifi.wifi_test_counter) {
         Wifi.wifi_test_counter--;
         AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_WIFI D_TRYING_TO_CONNECT " %s"), SettingsText(SET_STASSID1));

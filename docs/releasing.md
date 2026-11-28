@@ -19,12 +19,12 @@ The release tag is the public project version. The firmware version shown in Tas
 Before tagging:
 
 1. Confirm the branch is the intended public release state.
-2. Confirm `README.md` and `docs/grinder-tcp.md` match the supported hardware list.
-3. Run the host protocol and driver simulation tests.
-4. Build all three firmware environments.
-5. Smoke-test the NOUS A6T image on real hardware with no grinder load. Complete the Athom V3 hardware checklist before claiming hardware-tested support; otherwise retain its pending-validation status.
-6. Confirm Web/API `Power1 ON` cannot keep the relay on.
-7. Confirm TCP `HELLO`, `ON`, `OFF`, `!`, `STATE`, `BYE`, second-client `BUSY`, dropped-client fail-safe, and heartbeat timeout.
+2. Confirm `README.md` and [the BLE guide](grinder-ble.md) match the supported hardware and transport.
+3. Verify that PR CI passed the host regressions, including BLE framing, ownership and deferred maintenance.
+4. Confirm that all three firmware environments built for the reviewed changes.
+5. Smoke-test each device image with the grinder disconnected before claiming that device is hardware-tested with BLE.
+6. Confirm Web/API `Power1 ON` cannot turn on the relay and maintenance HTTP stays paused until the owner disconnects and the relay is OFF.
+7. Confirm BLE `HELLO`, `ON`, `OFF`, `!`, `STATE`, `BYE`, second-client `BUSY`, dropped-client fail-safe, and heartbeat timeout. Complete the [physical timing checks](grinder-ble.md#verification) on the candidate firmware for each model claimed as qualified.
 
 ## Release Assets
 

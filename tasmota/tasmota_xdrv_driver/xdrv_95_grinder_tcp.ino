@@ -127,54 +127,7 @@ void GrinderTcpCheckNetwork(void);
 void GrinderTcpAdvertise(void);
 
 #include "tasmota_xdrv_driver/xdrv_95_grinder_tcp_diagnostics.h"
-
-void GrinderTcpApplyQuietSettings(void) {
-  const bool corrected = Settings->deepsleep || !Settings->flag5.wifi_no_sleep || Settings->flag3.use_wifi_rescan;
-  Settings->deepsleep = 0;
-  Settings->flag5.wifi_no_sleep = 1;
-  Settings->flag3.use_wifi_rescan = 0;
-  if (corrected) {
-    AddLog(LOG_LEVEL_INFO, PSTR("GTC: Enforced DeepSleep 0, SetOption127 1, SetOption57 0"));
-  }
-  Settings->flag.mqtt_add_global_info = 0;
-  Settings->flag.mqtt_enabled = 0;
-  Settings->flag.mqtt_response = 0;
-  Settings->flag.mqtt_power_retain = 0;
-  Settings->flag.mqtt_button_retain = 0;
-  Settings->flag.mqtt_switch_retain = 0;
-  Settings->flag.mqtt_sensor_retain = 0;
-  Settings->flag.mqtt_offline = 0;
-  Settings->flag.hass_discovery = 0;
-  Settings->flag.hass_light = 0;
-  Settings->flag.mqtt_serial = 0;
-  Settings->flag.mqtt_serial_raw = 0;
-  Settings->flag3.timers_enable = 0;
-  Settings->flag3.mdns_enabled = 1;
-  Settings->flag3.hass_tele_on_power = 0;
-  Settings->flag3.mqtt_buttons = 0;
-  Settings->flag3.no_hold_retain = 1;
-  Settings->flag3.tuya_serial_mqtt_publish = 0;
-  Settings->flag3.grouptopic_mode = 0;
-  Settings->flag4.awsiot_shadow = 0;
-  Settings->flag4.device_groups_enabled = 0;
-  Settings->flag4.multiple_device_groups = 0;
-  Settings->flag4.zigbee_distinct_topics = 0;
-  Settings->flag4.mqtt_tls = 0;
-  Settings->flag4.mqtt_no_retain = 1;
-  Settings->flag5.mqtt_switches = 0;
-  Settings->flag5.mi32_enable = 0;
-  Settings->flag5.mqtt_state_retain = 0;
-  Settings->flag5.mqtt_info_retain = 0;
-  Settings->flag5.mqtt_status_retain = 0;
-  Settings->flag6.mqtt_disable_publish = 1;
-  Settings->flag6.mqtt_disable_modbus = 1;
-  Settings->flag6.matter_enabled = 0;
-  Settings->flag6.berry_no_autoexec = 1;
-  Settings->flag6.wizmote_enabled = 0;
-  Settings->flag2.emulation = EMUL_NONE;
-  Settings->rule_enabled = 0;
-  Settings->rule_once = 0;
-}
+#include "tasmota_xdrv_driver/xdrv_95_grinder_quiet.h"
 
 void GrinderTcpNeutralizePowerControls(void) {
   Settings->power_lock &= (POWER_MASK ^ 1);
@@ -212,7 +165,16 @@ bool GrinderTcpRelayStateOn(void) {
   return (TasmotaGlobal.power & 1);
 }
 
+#ifdef USE_GRINDER_BLE
+static bool GrinderBleOwnsRelayLink(void);
+#endif
+
 bool GrinderTcpRelayOwned(void) {
+#ifdef USE_GRINDER_BLE
+  if (!GrinderBleOwnsRelayLink()) {
+    return false;
+  }
+#endif
   return GrinderTcp.client_open && GrinderTcp.greeted && GrinderTcp.authorized_on && !GrinderTcp.close_pending;
 }
 
@@ -627,7 +589,12 @@ void GrinderTcpLoop(void) {
 
 #include "tasmota_xdrv_driver/xdrv_95_grinder_tcp_recovery.h"
 
+#ifdef USE_GRINDER_BLE
+#include "tasmota_xdrv_driver/xdrv_95_grinder_ble.h"
+#endif
+
 void GrinderTcpStart(void) {
+#ifndef USE_GRINDER_BLE
   if (GrinderTcp.suspended || TasmotaGlobal.restart_flag || TasmotaGlobal.ota_state_flag) {
     return;
   }
@@ -659,6 +626,7 @@ void GrinderTcpStart(void) {
   GrinderTcp.mdns_retry_at = millis();
   GrinderTcpAdvertise();
   AddLogServerActive(PSTR("Grinder TCP"));
+#endif
 }
 
 void GrinderTcpStopClosingClients(void) {
@@ -671,6 +639,9 @@ void GrinderTcpStopClosingClients(void) {
 }
 
 void GrinderTcpStop(const char *reason) {
+#ifdef USE_GRINDER_BLE
+  GrinderBleStop(reason);
+#else
   GrinderTcpRelayOff(reason);
   GrinderTcpCloseActiveNow(false, reason);
   GrinderTcpStopClosingClients();
@@ -682,6 +653,7 @@ void GrinderTcpStop(const char *reason) {
     GrinderTcpRecordEvent("server_stopped");
   }
   GrinderTcpRemoveMdnsService();
+#endif
 }
 
 void GrinderTcpRestartServer(const char *reason) {
@@ -748,6 +720,11 @@ bool Xdrv95(uint32_t function) {
     case FUNC_INIT:
       GrinderTcpInit();
       break;
+#ifdef USE_GRINDER_BLE
+    case FUNC_LOOP:
+      GrinderBleLoop();
+      break;
+#else
     case FUNC_NETWORK_UP:
       if (!TasmotaGlobal.restart_flag) {
         GrinderTcpApplyQuietSettings();
@@ -760,6 +737,7 @@ bool Xdrv95(uint32_t function) {
     case FUNC_NETWORK_DOWN:
       GrinderTcpNetworkDown();
       break;
+#endif
     case FUNC_ABOUT_TO_RESTART:
     case FUNC_INTERRUPT_STOP:
       GrinderTcp.suspended = true;
@@ -767,15 +745,19 @@ bool Xdrv95(uint32_t function) {
       break;
     case FUNC_INTERRUPT_START:
       GrinderTcp.suspended = false;
+#ifndef USE_GRINDER_BLE
       if (GrinderTcpNetworkUsable()) {
         GrinderTcpStart();
       }
+#endif
       break;
     case FUNC_SAVE_BEFORE_RESTART:
       GrinderTcpStop("device_restart");
       break;
     case FUNC_COMMAND:
+#ifndef USE_GRINDER_BLE
       result = DecodeCommand(kGrinderCommands, GrinderCommand);
+#endif
       break;
     case FUNC_SET_POWER:
       GrinderTcpObservePower();
@@ -784,7 +766,11 @@ bool Xdrv95(uint32_t function) {
       result = GrinderTcpSetDevicePower();
       break;
     case FUNC_ACTIVE:
+#ifdef USE_GRINDER_BLE
+      result = GrinderBle.active;
+#else
       result = GrinderTcp.server_started || GrinderTcp.client_open;
+#endif
       break;
   }
   return result;

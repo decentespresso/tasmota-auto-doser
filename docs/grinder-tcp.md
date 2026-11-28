@@ -331,7 +331,7 @@ USB serial grinder logs use these prefixes:
 
 ## Build
 
-For normal flashing, download a release asset from [GitHub Releases](https://github.com/decentespresso/tasmota-auto-doser/releases/latest). Use `tasmota32-nous-a6t-grinder.bin` for NOUS A6T and `tasmota32-grinder.bin` for validated generic classic ESP32 single-relay plugs.
+For TCP control, download your plug's image from the [v1.1.0 TCP release](https://github.com/decentespresso/tasmota-auto-doser/releases/tag/v1.1.0). Use `tasmota32-nous-a6t-grinder.bin` for NOUS A6T and `tasmota32-grinder.bin` for validated generic classic ESP32 single-relay plugs.
 
 For the Athom Tasmota ESP32-C3 Plug V3 (EU, UK and US variants), use `tasmota32c3-athom-v3-grinder.bin`. Back up its Tasmota configuration before the Web UI upload. This build uses the plug's saved GPIO template and calibration, not an embedded Athom template. After a factory reset, restore the correct template and calibration before use; the grinder service will not start without a supported relay layout.
 

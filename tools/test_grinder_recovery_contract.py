@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = (ROOT / "tasmota/tasmota_xdrv_driver/xdrv_95_grinder_tcp.ino").read_text(encoding="utf-8")
+QUIET = (ROOT / "tasmota/tasmota_xdrv_driver/xdrv_95_grinder_quiet.h").read_text(encoding="utf-8")
 DIAGNOSTICS = (ROOT / "tasmota/tasmota_xdrv_driver/xdrv_95_grinder_tcp_diagnostics.h").read_text(encoding="utf-8")
 RECOVERY = (ROOT / "tasmota/tasmota_xdrv_driver/xdrv_95_grinder_tcp_recovery.h").read_text(encoding="utf-8")
 CONFIG = (ROOT / "tasmota/my_user_config.h").read_text(encoding="utf-8")
@@ -53,9 +54,9 @@ def assert_diagnostics_fit():
 
 def main():
     assert "#ifdef USE_GRINDER_TCP\n#undef USE_DEEPSLEEP" in CONFIG
-    assert "Settings->deepsleep = 0;" in DRIVER
-    assert "Settings->flag5.wifi_no_sleep = 1;" in DRIVER
-    assert "Settings->flag3.use_wifi_rescan = 0;" in DRIVER
+    assert "Settings->deepsleep = 0;" in QUIET
+    assert "Settings->flag5.wifi_no_sleep = 1;" in QUIET
+    assert "Settings->flag3.use_wifi_rescan = 0;" in QUIET
     ordered(
         DRIVER[DRIVER.index("void GrinderTcpStop(const char *reason) {"):],
         "GrinderTcpRelayOff(reason);",

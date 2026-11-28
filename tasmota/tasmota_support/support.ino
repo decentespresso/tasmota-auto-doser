@@ -2464,6 +2464,9 @@ void SyslogAsync(bool refresh) {
   static uint32_t index = 1;
 
   if (!TasmotaGlobal.syslog_level || TasmotaGlobal.global_state.network_down) { return; }
+#ifdef USE_GRINDER_BLE
+  if (GrinderBleControlActive()) { return; }
+#endif
   if (refresh && !NeedLogRefresh(TasmotaGlobal.syslog_level, index)) { return; }
 
   char* line;
