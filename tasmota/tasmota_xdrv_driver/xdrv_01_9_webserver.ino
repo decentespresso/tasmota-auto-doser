@@ -30,9 +30,6 @@
 #ifdef USE_GRINDER_TCP
 void GrinderTcpStop(const char *reason);
 #endif
-#ifdef USE_GRINDER_BLE
-bool GrinderTcpRelayStateOn(void);
-#endif
 
 // Enable below demo feature only if defines USE_UNISHOX_COMPRESSION and USE_SCRIPT_WEB_DISPLAY are disabled
 //#define USE_WEB_SSE
@@ -765,7 +762,7 @@ void WifiManagerBegin(bool reset_only) {
 void PollDnsWebserver(void) {
   if (DnsServer) { DnsServer->processNextRequest(); }
 #ifdef USE_GRINDER_BLE
-  if (GrinderTcpRelayStateOn()) { return; }
+  if (GrinderBleControlActive()) { return; }
 #endif
   if (Webserver) { Webserver->handleClient(); }
 }
@@ -4758,6 +4755,9 @@ bool Xdrv01(uint32_t function) {
       if (Web.initial_config) {
         Wifi.config_counter = 200;    // Do not restart the device if it has SSId Blank
       }
+#ifdef USE_GRINDER_BLE
+      if (GrinderBleControlActive()) { break; }
+#endif
       if (Wifi.wifi_test_counter) {
         Wifi.wifi_test_counter--;
         AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_WIFI D_TRYING_TO_CONNECT " %s"), SettingsText(SET_STASSID1));

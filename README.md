@@ -14,7 +14,7 @@ Build the firmware below for your plug model.
 
 Use:
 
-- `tasmota32-nous-a6t-grinder.bin` for the tested NOUS A6T plug.
+- `tasmota32-nous-a6t-grinder.bin` for the NOUS A6T plug.
 - `tasmota32-grinder.bin` for validated classic ESP32 plugs with exactly one normal `Relay1`.
 - `tasmota32c3-athom-v3-grinder.bin` for the Athom Tasmota ESP32-C3 Plug V3 (EU, UK and US variants), pending hardware validation.
 
@@ -29,7 +29,7 @@ You also need HDS firmware with BLE grinder support. TCP-only HDS builds cannot 
 Device-specific builds:
 
 - NOUS A6T, hardware-verified with the original TCP build. The BLE build still needs commissioning.
-- Athom Tasmota ESP32-C3 Plug V3 (EU, UK and US variants, 4 MB flash), with the `tasmota32c3-athom-v3-grinder` build; not hardware-tested here. Keep the factory Tasmota GPIO template and calibration settings when upgrading.
+- Athom Tasmota ESP32-C3 Plug V3 (EU, UK and US variants, 4 MB flash), with the `tasmota32c3-athom-v3-grinder` build. A dry run on one Athom does not qualify other variants or establish physical cutoff timing. Keep the factory Tasmota GPIO template and calibration settings when upgrading.
 
 Expected candidates:
 
@@ -51,6 +51,8 @@ The firmware advertises a BLE service and accepts one owner. The scale subscribe
 The relay defaults to OFF. The firmware commands `Power1 OFF` on boot, owner disconnect, missing heartbeat, invalid input, `BYE`, `OFF` or `!`, maintenance, and unsupported relay layout.
 
 Only the active BLE owner can turn `Power1 ON`. The web UI, HTTP API, MQTT, buttons, rules, timers, and retained state cannot arm the grinder. Grinder control does not listen on TCP.
+
+For Wi-Fi setup or web updates, disable grinder mode on the scale to disconnect it. The plug defers maintenance for the entire owner connection, even between doses when the relay is OFF.
 
 On the HDS side, grinder mode starts only after the empty cup is stable, stops at cutoff, waits for cup removal before rearming, learns adaptive safety from valid shots, and keeps weighing responsive when the plug is offline.
 
@@ -103,7 +105,7 @@ Maintainer releases are created from tags named like:
 v1.0.0
 ```
 
-The release workflow runs host protocol tests, builds the three grinder firmware images, uploads CI artifacts, and attaches only web-upload OTA `.bin` files plus `SHA256SUMS.txt` to the GitHub Release.
+Pull requests run the host tests and build all three grinder images with read-only permissions. Tag builds also attach the web-upload OTA `.bin` files and `SHA256SUMS.txt` to the GitHub Release.
 
 See [docs/releasing.md](docs/releasing.md).
 

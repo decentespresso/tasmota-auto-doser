@@ -20,11 +20,11 @@ Before tagging:
 
 1. Confirm the branch is the intended public release state.
 2. Confirm `README.md` and [the BLE guide](grinder-ble.md) match the supported hardware and transport.
-3. Run the BLE framing and ownership tests, maintenance Web UI guard test, and existing host regressions.
-4. Build all three firmware environments.
+3. Verify that PR CI passed the host regressions, including BLE framing, ownership and deferred maintenance.
+4. Confirm that all three firmware environments built for the reviewed changes.
 5. Smoke-test each device image with the grinder disconnected before claiming that device is hardware-tested with BLE.
-6. Confirm Web/API `Power1 ON` cannot turn on the relay and maintenance HTTP pauses while the relay is on.
-7. Confirm BLE `HELLO`, `ON`, `OFF`, `!`, `STATE`, `BYE`, second-client `BUSY`, dropped-client fail-safe, and heartbeat timeout. With the grinder disconnected, measure physical relay-off timing with the saved access point unavailable, both at cutoff and after abrupt owner loss. Repeat with the tablet's DE1 BLE connection active.
+6. Confirm Web/API `Power1 ON` cannot turn on the relay and maintenance HTTP stays paused until the owner disconnects and the relay is OFF.
+7. Confirm BLE `HELLO`, `ON`, `OFF`, `!`, `STATE`, `BYE`, second-client `BUSY`, dropped-client fail-safe, and heartbeat timeout. Complete the [physical timing checks](grinder-ble.md#verification) on the candidate firmware for each model claimed as qualified.
 
 ## Release Assets
 

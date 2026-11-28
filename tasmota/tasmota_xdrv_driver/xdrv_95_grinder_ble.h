@@ -70,6 +70,14 @@ class GrinderBleCharacteristicCallbacks : public NimBLECharacteristicCallbacks {
 static GrinderBleServerCallbacks GrinderBleServerEvents;
 static GrinderBleCharacteristicCallbacks GrinderBleCharacteristicEvents;
 
+bool GrinderBleControlActive(void) {
+  if (GrinderTcpRelayStateOn()) { return true; }
+  portENTER_CRITICAL(&GrinderBleMux);
+  const bool connected = GrinderBleInput.owner.connected();
+  portEXIT_CRITICAL(&GrinderBleMux);
+  return connected;
+}
+
 static bool GrinderBleOwnsRelayLink(void) {
   portENTER_CRITICAL(&GrinderBleMux);
   const bool owns = GrinderBleInput.owns(GrinderBle.ownerGeneration);

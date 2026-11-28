@@ -546,6 +546,9 @@ void FileLoggingAsync(bool refresh) {
 
   uint32_t filelog_level = Settings->filelog_level % 10;
   if (!ffs_type || !filelog_level) { return; }  // No filesystem or [FileLog] disabled
+#ifdef USE_GRINDER_BLE
+  if (GrinderBleControlActive()) { return; }
+#endif
   if (refresh && !NeedLogRefresh(filelog_level, index)) { return; }  // No log buffer changes
   uint32_t filelog_option = Settings->filelog_level / 10;
 

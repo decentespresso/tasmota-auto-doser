@@ -2,7 +2,7 @@
 
 The BLE grinder builds replace TCP grinder control. A firmware upgrade preserves the plug's Wi-Fi settings, GPIO template and power-meter calibration. If a saved network is unavailable, the plug keeps its settings and retries without opening a setup network. If both SSIDs are empty, as after a factory reset, it opens Wi-Fi Manager. Restore the same plug's configuration backup before using the grinder again. To roll back to TCP, use your model's [v1.1.0 image](https://github.com/decentespresso/tasmota-auto-doser/releases/tag/v1.1.0).
 
-While the relay is ON, the plug defers Wi-Fi reconnects, scans and maintenance Web UI requests so they do not delay cutoff. Wait until the relay is OFF before retrying a maintenance request.
+Grinder control takes priority from the first BLE owner connection, including while waiting for tare, armed, or between doses with the relay OFF. The plug defers Wi-Fi reconnects and scans, pending credential-test work, time synchronization and Web UI polling until the owner disconnects and the relay is OFF. For maintenance, disable grinder mode on the HDS to release the connection, then retry the web page. Stopping a dose alone does not release the plug.
 
 ## Service
 
@@ -33,4 +33,6 @@ python tools/test_grinder_ble_web_poll.py
 python tools/test_grinder_ble_wifi_retry.py
 ```
 
-Start hardware checks with the grinder disconnected. Verify boot OFF, greeting, ON/OFF, cutoff, abrupt owner loss, heartbeat timeout, and a rejected second client while the owner's relay remains unchanged. Repeat with no shared Wi-Fi and with the tablet's DE1 and scale BLE connections active. Record cutoff and fail-off timing before operating the grinder. Follow the physical safety checks in [empty-grinder commissioning](grinder-tcp.md#empty-grinder-commissioning) before grinding.
+Start with the grinder disconnected. Verify cold boot OFF, greeting, ON/OFF, cutoff, heartbeat timeout and second-client rejection. Start a Wi-Fi credential test before connecting the owner; keep it connected across the test timeout, first with the relay OFF and then during a dose. Confirm maintenance resumes only after disconnect and relay OFF.
+
+For release qualification, use a timestamped outlet-state monitor. Set acceptance limits for normal cutoff and abrupt owner loss before the run. Measure from the cutoff trigger or induced link loss to physical outlet OFF, including HDS power loss, explicit BLE disconnect and loss of radio range. Test with the saved AP absent and on a connected LAN with the NTP server unreachable; include a cold boot with an early owner and repeat with the tablet's DE1 and scale connections active. Record firmware revisions, hardware model, sample count, and worst observed latency for each case against its limit. A BLE acknowledgement or a Web UI reading is not a physical measurement. Follow [empty-grinder commissioning](grinder-tcp.md#empty-grinder-commissioning) only after the dry tests pass.

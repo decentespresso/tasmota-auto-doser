@@ -2144,6 +2144,12 @@ void WifiPollNtp() {
                                          (ntp_sync_minute == uptime_minute))) ||   // Re-sync every hour
        TasmotaGlobal.ntp_force_sync ) ) {                                          // Forced sync
 
+#ifdef USE_GRINDER_BLE
+    if (GrinderBleControlActive()) {
+      TasmotaGlobal.ntp_force_sync = true;
+      return;
+    }
+#endif
     TasmotaGlobal.ntp_force_sync = false;
 
     AddLog(LOG_LEVEL_DEBUG_MORE, PSTR("NTP: Sync time..."));

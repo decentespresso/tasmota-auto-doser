@@ -254,9 +254,6 @@ void SetLatchingRelay(power_t lpower, uint32_t state) {
 #define GRINDER_TCP_EARLY_POWER_GUARD_INSTALLED
 bool GrinderTcpSetDevicePowerGuard(power_t rpower, uint32_t source);
 #endif
-#ifdef USE_GRINDER_BLE
-bool GrinderTcpRelayStateOn(void);
-#endif
 
 void SetDevicePower(power_t rpower, uint32_t source) {
   if (TasmotaGlobal.power_on_delay) {
@@ -1269,7 +1266,14 @@ void PerformEverySecond(void)
   WifiPollNtp();
 
 #ifdef ESP32
+#ifdef USE_GRINDER_BLE
+  if (GrinderBleControlActive()) { return; }
+  static bool sketchSizePending = true;
+  if (sketchSizePending && TasmotaGlobal.uptime >= 11) {
+    sketchSizePending = false;
+#else
   if (11 == TasmotaGlobal.uptime) {  // Perform one-time ESP32 houskeeping
+#endif
     ESP_getSketchSize();             // Init sketchsize as it can take up to 2 seconds
   }
 #endif
@@ -1658,7 +1662,7 @@ void Every250mSeconds(void)
     break;
   case 2:                                                 // Every x.5 second
 #ifdef USE_GRINDER_BLE
-    if (GrinderTcpRelayStateOn()) { break; }
+    if (GrinderBleControlActive()) { break; }
 #endif
     if (Settings->flag4.network_wifi) {
       WifiCheck(TasmotaGlobal.wifi_state_flag);
@@ -1668,6 +1672,9 @@ void Every250mSeconds(void)
     }
     break;
   case 3:
+#ifdef USE_GRINDER_BLE
+    if (GrinderBleControlActive()) { break; }
+#endif
     {
       if (!TasmotaGlobal.global_state.network_down) {
 #ifdef FIRMWARE_MINIMAL
