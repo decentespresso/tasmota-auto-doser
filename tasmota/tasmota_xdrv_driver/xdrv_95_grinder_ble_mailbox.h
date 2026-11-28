@@ -16,6 +16,7 @@ struct GrinderBlePeer {
 };
 
 struct GrinderBlePacket {
+  uint32_t receivedAt;
   uint8_t length;
   uint8_t data[GrinderBleValueSize];
 };
@@ -61,7 +62,7 @@ struct GrinderBleMailbox {
     }
   }
 
-  void write(uint16_t handle, const uint8_t *data, size_t length) {
+  void write(uint16_t handle, const uint8_t *data, size_t length, uint32_t receivedAt) {
     if (owner.handle != handle || owner.closing || fault != GRINDER_TCP_REASON_NONE) {
       return;
     }
@@ -79,6 +80,7 @@ struct GrinderBleMailbox {
       return;
     }
     GrinderBlePacket &packet = packets[(head + count) % GrinderBleQueueDepth];
+    packet.receivedAt = receivedAt;
     packet.length = static_cast<uint8_t>(length);
     memcpy(packet.data, data, length);
     count++;

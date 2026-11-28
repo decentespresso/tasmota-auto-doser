@@ -55,7 +55,10 @@ def publish(repository, tag, directory, firmware):
     if release is None:
         gh(
             repository, "release", "create", tag, "--draft", "--verify-tag",
-            "--title", tag, "--notes", "Grinder TCP firmware release.",
+            "--title", tag, "--notes",
+            "BLE grinder firmware. Requires HDS firmware with BLE grinder support. "
+            "For TCP-only HDS, use the [v1.1.0 plug firmware]"
+            "(https://github.com/decentespresso/tasmota-auto-doser/releases/tag/v1.1.0).",
         )
     elif {asset["name"] for asset in release["assets"]} - {path.name for path in files}:
         raise ValueError("Draft contains unexpected assets; inspect it before retrying")

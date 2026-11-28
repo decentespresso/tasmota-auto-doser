@@ -12,6 +12,7 @@ static constexpr uint32_t GrinderBleHelloTimeout = 2000;
 static constexpr uint32_t GrinderBleBusyTimeout = 1500;
 static constexpr uint32_t GrinderBleBusyGrace = 250;
 static constexpr uint32_t GrinderBleAdvertisingRetry = 100;
+static constexpr uint32_t GrinderBleSetupRetry = 5000;
 
 static portMUX_TYPE GrinderBleMux = portMUX_INITIALIZER_UNLOCKED;
 static GrinderBleMailbox GrinderBleInput{};
@@ -25,7 +26,8 @@ static struct {
   uint32_t contenderGeneration = 0;
   uint32_t contenderRepliedAt = 0;
   uint32_t advertisingAttemptAt = 0;
-  bool setupAttempted = false;
+  uint32_t setupAttemptAt = 0U - GrinderBleSetupRetry;
+  bool setupNeedsReset = false;
   bool contenderReplied = false;
   bool active = false;
 } GrinderBle;
@@ -51,9 +53,10 @@ class GrinderBleServerCallbacks : public NimBLEServerCallbacks {
 
 class GrinderBleCharacteristicCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &connection) override {
+    const uint32_t receivedAt = millis();
     const NimBLEAttValue value = characteristic->getValue();
     portENTER_CRITICAL(&GrinderBleMux);
-    GrinderBleInput.write(connection.getConnHandle(), value.data(), value.size());
+    GrinderBleInput.write(connection.getConnHandle(), value.data(), value.size(), receivedAt);
     portEXIT_CRITICAL(&GrinderBleMux);
   }
 
@@ -123,35 +126,24 @@ static void GrinderBleReject(const GrinderBlePeer &owner, uint8_t id, GrinderTcp
   GrinderBleDisconnect(owner, false);
 }
 
-static bool GrinderBleConfigure(void) {
-  if (GrinderBle.setupAttempted) {
-    return GrinderBle.advertising != nullptr;
-  }
-  uint8_t manufacturer[8] = {0xFF, 0xFF};
-  if (!GrinderTcpCacheIdentity() || ESP_OK != esp_read_mac(manufacturer + 2, ESP_MAC_WIFI_STA)) {
+static bool GrinderBleCreateService(const uint8_t (&manufacturer)[8]) {
+  auto *server = NimBLEDevice::createServer();
+  if (!server) {
     return false;
   }
-  if (!NimBLEDevice::init("")) {
-    return false;
-  }
-  GrinderBle.setupAttempted = true;
-  GrinderBle.server = NimBLEDevice::createServer();
-  if (!GrinderBle.server) {
-    return false;
-  }
-  GrinderBle.server->setCallbacks(&GrinderBleServerEvents, false);
-  GrinderBle.server->advertiseOnDisconnect(false);
-  NimBLEService *service = GrinderBle.server->createService(GrinderBleServiceUuid);
+  server->setCallbacks(&GrinderBleServerEvents, false);
+  server->advertiseOnDisconnect(false);
+  NimBLEService *service = server->createService(GrinderBleServiceUuid);
   if (!service) {
     return false;
   }
   auto *command = service->createCharacteristic(GrinderBleCommandUuid, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-  GrinderBle.reply = service->createCharacteristic(GrinderBleReplyUuid, NIMBLE_PROPERTY::NOTIFY);
-  if (!command || !GrinderBle.reply) {
+  auto *reply = service->createCharacteristic(GrinderBleReplyUuid, NIMBLE_PROPERTY::NOTIFY);
+  if (!command || !reply) {
     return false;
   }
   command->setCallbacks(&GrinderBleCharacteristicEvents);
-  GrinderBle.reply->setCallbacks(&GrinderBleCharacteristicEvents);
+  reply->setCallbacks(&GrinderBleCharacteristicEvents);
   if (!service->start()) {
     return false;
   }
@@ -161,11 +153,44 @@ static bool GrinderBleConfigure(void) {
       !data.setManufacturerData(manufacturer, sizeof(manufacturer)) || !advertising->setAdvertisementData(data)) {
     return false;
   }
+  advertising->enableScanResponse(false);
+  server->start();
+  if (!service->getHandle() || !command->getHandle() || !reply->getHandle()) {
+    return false;
+  }
+  GrinderBle.server = server;
+  GrinderBle.reply = reply;
   GrinderBle.advertising = advertising;
-  GrinderBle.advertising->enableScanResponse(false);
-  GrinderBle.server->start();
-  AddLog(LOG_LEVEL_INFO, PSTR("GRB: Ready %s"), GrinderTcp.plug_mac);
   return true;
+}
+
+static bool GrinderBleConfigure(void) {
+  if (GrinderBle.advertising) {
+    return true;
+  }
+  const uint32_t now = millis();
+  if (now - GrinderBle.setupAttemptAt < GrinderBleSetupRetry) {
+    return false;
+  }
+  GrinderBle.setupAttemptAt = now;
+  if (GrinderBle.setupNeedsReset) {
+    if (!NimBLEDevice::deinit(false) || !NimBLEDevice::deinit(true)) {
+      AddLog(LOG_LEVEL_INFO, PSTR("GRB: Setup reset failed; will retry"));
+      return false;
+    }
+    GrinderBle.setupNeedsReset = false;
+  }
+  uint8_t manufacturer[8] = {0xFF, 0xFF};
+  if (GrinderTcpCacheIdentity() && ESP_OK == esp_read_mac(manufacturer + 2, ESP_MAC_WIFI_STA) &&
+      NimBLEDevice::init("")) {
+    if (GrinderBleCreateService(manufacturer)) {
+      AddLog(LOG_LEVEL_INFO, PSTR("GRB: Ready %s"), GrinderTcp.plug_mac);
+      return true;
+    }
+    GrinderBle.setupNeedsReset = true;
+  }
+  AddLog(LOG_LEVEL_INFO, PSTR("GRB: Setup failed; will retry"));
+  return false;
 }
 
 static void GrinderBleStop(const char *reason) {
@@ -185,12 +210,12 @@ static void GrinderBleStop(const char *reason) {
   }
 }
 
-static void GrinderBleProcessCommand(const GrinderBlePeer &owner, const GrinderBleCommand &command) {
+static void GrinderBleProcessCommand(const GrinderBlePeer &owner, const GrinderBleCommand &command, uint32_t receivedAt) {
   if (command.parsed.reason != GRINDER_TCP_REASON_NONE) {
     GrinderBleReject(owner, command.id, command.parsed.reason);
     return;
   }
-  GrinderTcp.last_rx = millis();
+  GrinderTcp.last_rx = receivedAt;
   switch (command.parsed.action) {
     case GRINDER_TCP_ACTION_HELLO:
       GrinderTcp.greeted = true;
@@ -216,7 +241,7 @@ static void GrinderBleProcessCommand(const GrinderBlePeer &owner, const GrinderB
   }
 }
 
-static void GrinderBlePollOwner(const GrinderBlePeer &owner, GrinderTcpReason fault, uint8_t faultId, uint32_t now) {
+static void GrinderBlePollOwner(const GrinderBlePeer &owner, GrinderTcpReason fault, uint8_t faultId) {
   if (GrinderBle.ownerGeneration != owner.generation) {
     GrinderTcpRelayOff("ble_owner_changed");
     GrinderBle.ownerGeneration = owner.generation;
@@ -237,22 +262,23 @@ static void GrinderBlePollOwner(const GrinderBlePeer &owner, GrinderTcpReason fa
     GrinderBleReject(owner, faultId, fault);
     return;
   }
-  const uint32_t timeout = GrinderTcp.greeted ? GRINDER_TCP_HEARTBEAT_TIMEOUT : GrinderBleHelloTimeout;
-  if (now - GrinderTcp.last_rx >= timeout) {
-    GrinderBleCloseOwner(owner, GrinderTcp.greeted ? "heartbeat_timeout" : "hello_timeout");
-    return;
-  }
   for (uint8_t index = 0; index < GrinderBleQueueDepth && !GrinderTcp.close_pending; index++) {
     GrinderBlePacket packet{};
     portENTER_CRITICAL(&GrinderBleMux);
     const bool found = GrinderBleInput.take(owner.generation, packet);
     portEXIT_CRITICAL(&GrinderBleMux);
+    const uint32_t now = millis();
+    const uint32_t timeout = GrinderTcp.greeted ? GRINDER_TCP_HEARTBEAT_TIMEOUT : GrinderBleHelloTimeout;
+    if (now - GrinderTcp.last_rx >= timeout) {
+      GrinderBleCloseOwner(owner, GrinderTcp.greeted ? "heartbeat_timeout" : "hello_timeout");
+      return;
+    }
     if (!found) {
       break;
     }
     const GrinderBleCommand command = GrinderBleRead(GrinderBle.line, packet.data, packet.length, GrinderTcp.greeted);
     if (!command.pending) {
-      GrinderBleProcessCommand(owner, command);
+      GrinderBleProcessCommand(owner, command, packet.receivedAt);
     }
   }
 }
@@ -308,7 +334,7 @@ static void GrinderBleLoop(void) {
   const uint8_t faultId = GrinderBleInput.faultId;
   portEXIT_CRITICAL(&GrinderBleMux);
   const uint32_t now = millis();
-  GrinderBlePollOwner(owner, fault, faultId, now);
+  GrinderBlePollOwner(owner, fault, faultId);
   GrinderTcpEnforceRelayOwnership();
   if ((owner.connected() || contender.connected()) && TasmotaGlobal.skip_sleep < 1) {
     TasmotaGlobal.skip_sleep = 1;

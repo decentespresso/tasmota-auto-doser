@@ -1410,9 +1410,7 @@ void WifiCheckIp(void) {
         } else {
           if (!strlen(SettingsText(SET_STASSID1)) && !strlen(SettingsText(SET_STASSID2))) {
             Settings->wifi_channel = 0;  // Disable stored AP
-#ifndef USE_GRINDER_BLE
             wifi_config_tool = WIFI_MANAGER;  // Skip empty SSIDs and start Wifi config tool
-#endif
             Wifi.retry = 0;
           } else {
             AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_WIFI D_ATTEMPTING_CONNECTION));

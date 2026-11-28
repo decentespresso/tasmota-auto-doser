@@ -24,7 +24,7 @@ Before tagging:
 4. Build all three firmware environments.
 5. Smoke-test each device image with the grinder disconnected before claiming that device is hardware-tested with BLE.
 6. Confirm Web/API `Power1 ON` cannot turn on the relay and maintenance HTTP pauses while the relay is on.
-7. Confirm BLE `HELLO`, `ON`, `OFF`, `!`, `STATE`, `BYE`, second-client `BUSY`, dropped-client fail-safe, and heartbeat timeout. Repeat with no shared Wi-Fi and with the tablet's DE1 BLE connection active.
+7. Confirm BLE `HELLO`, `ON`, `OFF`, `!`, `STATE`, `BYE`, second-client `BUSY`, dropped-client fail-safe, and heartbeat timeout. With the grinder disconnected, measure physical relay-off timing with the saved access point unavailable, both at cutoff and after abrupt owner loss. Repeat with the tablet's DE1 BLE connection active.
 
 ## Release Assets
 

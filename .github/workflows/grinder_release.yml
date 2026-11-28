@@ -28,6 +28,7 @@ jobs:
       - name: Build and run grinder host tests
         run: |
           mkdir -p build/host-tests
+          python3 -B tools/test_grinder_recovery_contract.py
           python3 tools/test_grinder_recovery_deadlines.py
           python3 tools/test_grinder_listener_start.py
           g++ -std=c++17 tools/grinder_tcp_protocol_test.cpp -o build/host-tests/grinder_tcp_protocol_test
@@ -36,7 +37,10 @@ jobs:
           ./build/host-tests/grinder_tcp_protocol_test
           ./build/host-tests/grinder_tcp_driver_sim_test
           ./build/host-tests/grinder_ble_protocol_test
+          python3 -B tools/test_grinder_ble_setup.py
+          python3 -B tools/test_grinder_ble_watchdog.py
           python3 -B tools/test_grinder_ble_web_poll.py
+          python3 -B tools/test_grinder_ble_wifi_retry.py
           python3 -B tools/test_grinder_mdns_probe.py -v
           python3 tools/test_grinder_update_lifecycle.py
           python3 tools/test_grinder_empty_ota.py

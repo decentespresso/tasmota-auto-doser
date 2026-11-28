@@ -254,6 +254,9 @@ void SetLatchingRelay(power_t lpower, uint32_t state) {
 #define GRINDER_TCP_EARLY_POWER_GUARD_INSTALLED
 bool GrinderTcpSetDevicePowerGuard(power_t rpower, uint32_t source);
 #endif
+#ifdef USE_GRINDER_BLE
+bool GrinderTcpRelayStateOn(void);
+#endif
 
 void SetDevicePower(power_t rpower, uint32_t source) {
   if (TasmotaGlobal.power_on_delay) {
@@ -1654,6 +1657,9 @@ void Every250mSeconds(void)
     }
     break;
   case 2:                                                 // Every x.5 second
+#ifdef USE_GRINDER_BLE
+    if (GrinderTcpRelayStateOn()) { break; }
+#endif
     if (Settings->flag4.network_wifi) {
       WifiCheck(TasmotaGlobal.wifi_state_flag);
       TasmotaGlobal.wifi_state_flag = WIFI_RESTART;

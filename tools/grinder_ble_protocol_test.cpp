@@ -55,8 +55,8 @@ static void TestPeerIsolationAndHandleReuse(void) {
   mailbox.subscribe(1, true);
   mailbox.subscribe(2, true);
   const uint8_t stop[] = {1, '!'};
-  mailbox.write(2, stop, sizeof(stop));
-  mailbox.write(2, nullptr, 0);
+  mailbox.write(2, stop, sizeof(stop), 21);
+  mailbox.write(2, nullptr, 0, 22);
   GrinderBlePacket packet{};
   assert(!mailbox.take(generation, packet));
   assert(mailbox.owns(generation));
@@ -64,9 +64,10 @@ static void TestPeerIsolationAndHandleReuse(void) {
   assert(!mailbox.owner.connected() && mailbox.contender.handle == 2);
   assert(mailbox.connect(1, 40));
   mailbox.subscribe(1, true);
-  mailbox.write(1, stop, sizeof(stop));
+  mailbox.write(1, stop, sizeof(stop), 41);
   assert(!mailbox.take(generation, packet));
   assert(mailbox.take(mailbox.owner.generation, packet));
+  assert(packet.receivedAt == 41);
 }
 
 static void TestPriorityOffAndOwnerFault(void) {
@@ -78,15 +79,15 @@ static void TestPriorityOffAndOwnerFault(void) {
   const uint8_t on[] = {1, 'O', 'N', '\n'};
   const uint8_t off[] = {2, '!'};
   for (size_t index = 0; index < GrinderBleQueueDepth; index++) {
-    mailbox.write(1, on, sizeof(on));
+    mailbox.write(1, on, sizeof(on), 11);
   }
-  mailbox.write(1, off, sizeof(off));
+  mailbox.write(1, off, sizeof(off), 12);
   GrinderBlePacket packet{};
   assert(mailbox.take(generation, packet));
   assert(packet.data[0] == 2 && packet.data[1] == '!');
   assert(!mailbox.take(generation, packet));
   for (size_t index = 0; index <= GrinderBleQueueDepth; index++) {
-    mailbox.write(1, on, sizeof(on));
+    mailbox.write(1, on, sizeof(on), 13);
   }
   assert(mailbox.fault == GRINDER_TCP_REASON_LINE_OVERFLOW);
   assert(mailbox.faultId == 1 && !mailbox.owns(generation));

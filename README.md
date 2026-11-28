@@ -4,7 +4,7 @@ Decent Espresso firmware for controlling a grinder from an HDS scale. The three 
 
 This is not a general Tasmota distribution. Official Tasmota binaries do not include the grinder driver.
 
-For released Wi-Fi/TCP builds, use [GitHub Releases](https://github.com/decentespresso/tasmota-auto-doser/releases/latest) and the [TCP setup and protocol](docs/grinder-tcp.md). The experimental BLE builds below must be built from this checkout. License: [GPL-3.0-only](LICENSE.txt).
+For Wi-Fi/TCP builds, use the [v1.1.0 TCP release](https://github.com/decentespresso/tasmota-auto-doser/releases/tag/v1.1.0) and the [TCP setup and protocol](docs/grinder-tcp.md). The experimental BLE builds below must be built from this checkout. License: [GPL-3.0-only](LICENSE.txt).
 
 ## Quick Install
 
